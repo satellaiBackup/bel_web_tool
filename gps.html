@@ -410,7 +410,7 @@
 
         finalOutput = {
             c: "fa",
-            p: { id: `f-${Math.floor(Date.now() / 1000 % 100000000 )}`, fp: [], fn: [] }
+            p: { id: `f-${Math.floor(Date.now() / 1000 % 100000000 )}` }
         };
         const data = currentDrawnShapeData;
 
@@ -419,16 +419,21 @@
             if (data.path && data.path.length > 0) {
                 let flattenedPath = [];
                 data.path.forEach(point => {
-                    flattenedPath.push(point[0]); 
-                    flattenedPath.push(point[1]); 
+                    const wgs84Point = gcj02towgs84(point[0], point[1]);
+                    flattenedPath.push(wgs84Point[1]); // lat WGS84
+                    flattenedPath.push(wgs84Point[0]); // lng WGS84
                 });
+                if (!finalOutput.p.fp) finalOutput.p.fp = [];
                 finalOutput.p.fp.push({ type: 1, p: flattenedPath });
             } else {
                 handleSubmissionError("错误: 路径数据为空。"); return;
             }
         } else if (data.className === 'Overlay.Circle' || data.className === 'AMap.Circle') {
             if (data.center && typeof data.radius !== 'undefined') {
-                finalOutput.p.fn.push({ type: 0, center: data.center, radius: data.radius });
+                const centerWGS84 = gcj02towgs84(data.center[0], data.center[1]);
+                const centerLatLng = [centerWGS84[1], centerWGS84[0]]; // 先纬度后经度
+                if (!finalOutput.p.fn) finalOutput.p.fn = [];
+                finalOutput.p.fn.push({ type: 0, center: centerLatLng, radius: data.radius });
             } else {
                 handleSubmissionError("错误: 圆形数据不完整。"); return;
             }
@@ -442,46 +447,14 @@
 
 
 function handleSubmitData() {
-        if (!currentDrawnShapeData) {
+        if (!finalOutput) {
             alert("没有可提交的数据。请先绘制一个图形。");
             coordinatesOutput.value = "错误: 没有可提交的数据。";
             return;
         }
-        console.log("开始坐标转换 (GCJ-02 to WGS-84)...");
+        console.log("使用已转换的WGS-84数据...");
 
-        let finalOutput = {
-            c: "fa",
-            p: { id: `f-${Date.now()}`, fp: [], fn: [] }
-        };
-        const data = currentDrawnShapeData;
-
-        if (data.className === 'Overlay.Polygon' || data.className === 'Overlay.Polyline' || data.className === 'Overlay.Rectangle' ||
-            data.className === 'AMap.Polygon' || data.className === 'AMap.Polyline' || data.className === 'AMap.Rectangle') {
-            if (data.path && data.path.length > 0) {
-                let flattenedPathWGS84 = [];
-                data.path.forEach(pointGCJ02 => {
-                    const wgs84Point = gcj02towgs84(pointGCJ02[0], pointGCJ02[1]);
-                    flattenedPathWGS84.push(wgs84Point[0]); // lng WGS84
-                    flattenedPathWGS84.push(wgs84Point[1]); // lat WGS84
-                });
-                finalOutput.p.fp.push({ type: 1, p: flattenedPathWGS84 });
-                console.log("路径坐标已转换为WGS-84:", flattenedPathWGS84);
-            } else {
-                handleSubmissionError("错误: 路径数据为空。"); return;
-            }
-        } else if (data.className === 'Overlay.Circle' || data.className === 'AMap.Circle') {
-            if (data.center && typeof data.radius !== 'undefined') {
-                const centerGCJ02 = data.center;
-                const centerWGS84 = gcj02towgs84(centerGCJ02[0], centerGCJ02[1]);
-                finalOutput.p.fn.push({ type: 0, center: centerWGS84, radius: data.radius });
-                console.log("圆心坐标已转换为WGS-84:", centerWGS84);
-            } else {
-                handleSubmissionError("错误: 圆形数据不完整。"); return;
-            }
-        } else {
-            handleSubmissionError("错误: 未知图形类型。实际类型: " + data.className); return;
-        }
-
+        // 直接使用已经转换好的finalOutput数据
         coordinatesOutput.value = JSON.stringify(finalOutput); 
         console.log("格式化提交的数据 (WGS-84):", finalOutput);
 
