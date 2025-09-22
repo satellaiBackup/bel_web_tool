@@ -1,0 +1,1352 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>蓝牙调试助手</title>
+    <script src="./tailwindcss.js"></script>
+    <style type="text/tailwindcss">
+        .font-10pt {
+            font-size: 10pt;
+        }
+        /* Inter font for better aesthetics, monospace is the original */
+        body {
+            font-family: 'Inter', sans-serif, monospace;
+        }
+        /* Adding some basic button styling for better UX */
+        button.cmd-button {
+            @apply bg-blue-500 hover:bg-blue-700 text-white py-2 px-4 rounded-lg shadow-md transition-colors duration-150 ease-in-out font-10pt hover:bg-orange-700;
+        }
+        button.cmd-button:disabled {
+            @apply bg-gray-300 hover:bg-gray-300 cursor-not-allowed shadow-none;
+        }
+        input[type="text"], input[type="file"] {
+            @apply border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+        }
+        label#status {
+            @apply px-2 py-1 rounded-md;
+        }
+    </style>
+</head>
+<body class="font-mono p-4 md:p-8 bg-gray-50 text-gray-800">
+    <div class="container mx-auto">
+        <h1 class="text-3xl font-bold mb-2 text-blue-600">蓝牙调试助手</h1>
+        <p class="mb-4 text-sm text-gray-600">Copyright SATELLAI 2024 (要求版本<b class="text-red-500">v8.1.0</b>以上)</p>
+        
+        <div class="flex flex-wrap gap-2 mb-6 items-center">
+            <input type="text" id="nameFilter" placeholder="设备名称前缀 (例如: SATELLAI)" class="min-w-[200px] sm:min-w-[320px] flex-grow">
+            <button id="scanAndConnect" class="cmd-button">扫描设备并连接</button>
+            <button id="disconnect" class="cmd-button bg-red-500 hover:bg-red-700">断开连接</button>
+            <label id="status" class="text-red-500 font-semibold">未连接</label>
+        </div>
+
+        <details class="mb-6 bg-white shadow-md rounded-lg p-4">
+            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">上传文件&更新固件</summary>
+            <div class="overflow-x-auto mt-4">
+                <table class="w-full border-collapse">
+                    <tbody>
+                        <div class="space-y-4 mb-6">
+                            <div class="flex items-center gap-2">
+                                <label for="fwfile" class="font-medium text-gray-700">固件升级:</label>
+                                <input type="file" id="fwfile" class="cmd" disabled onchange="chooseFile(this)">
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <label for="certfile" class="font-medium text-gray-700">写入证书:</label>
+                                <input type="file" id="certfile" class="cmd" disabled onchange="sendCert(this)">
+                            </div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <label for="genericfile" class="font-medium text-gray-700">上传文件:</label>
+                                <input type="file" id="genericfile" class="cmd" disabled onchange="sendFile(this)">
+                                <input type="text" id="genericfilePath" placeholder="可选路径 (例如: /logs/)" class="cmd min-w-[200px] sm:min-w-[320px] flex-grow" disabled>
+                            </div>
+                        </div>
+                    </tbody>
+                </table>
+            </div>
+        </details>
+
+        <details class="mb-6 bg-white shadow-md rounded-lg p-4">
+            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">设备信息</summary>
+            <div class="overflow-x-auto mt-4">
+                <table class="w-full border-collapse">
+                    <thead class="bg-gray-200">
+                         <tr>
+                            <th class="text-left p-3 border-b border-gray-300 min-w-[250px] md:min-w-[300px]">命令</th>
+                            <th class="text-left p-3 border-b border-gray-300 min-w-[200px]">响应</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="readSN" class="cmd cmd-button" disabled onclick="readSN()">读取SN</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="readSN" class="rsp"></label></td>
+                        </tr>
+                        
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="AT" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">AT</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="AT" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="AT+FWVER?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">52840固件版本</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="AT+FWVER?" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="AT+CGMR" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">BG95固件版本</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="AT+CGMR" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="AT+DEVICEID?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">设备ID</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="AT+DEVICEID?" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="AT+MAC?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">蓝牙地址</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="AT+MAC?" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="AT+SENSORDATA?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">传感器数据(1组)</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="AT+SENSORDATA?" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="AT+TEMPERATUREDATA?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">传感器温度</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="AT+TEMPERATUREDATA?" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="AT+VBAT?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">电压/电流/电量</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="AT+VBAT?" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                                        <td class="p-3 border-b border-gray-300"><button id="AT+QCCID" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">查询ICCID</button></td>
+                                        <td class="p-3 border-b border-gray-300"><label for="AT+QCCID" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                                        <td class="p-3 border-b border-gray-300"><button id="AT+QNCCID" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">查询NTN ICCID</button></td>
+                                        <td class="p-3 border-b border-gray-300"><label for="AT+QNCCID" class="rsp"></label></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </details>
+
+
+        <details class="mb-6 bg-white shadow-md rounded-lg p-4">
+            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">NTN测试</summary>
+            <div class="overflow-x-auto mt-4">
+                <table class="w-full border-collapse">
+                    <thead class="bg-gray-200">
+                         <tr>
+                            <th class="text-left p-3 border-b border-gray-300 min-w-[250px] md:min-w-[300px]">命令</th>
+                            <th class="text-left p-3 border-b border-gray-300 min-w-[200px]">响应</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="readDEVstate" class="cmd cmd-button" disabled onclick="readDEVstate()">查询设备运行节点</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="readDEVstate" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300">
+                                <div class="flex items-center gap-2">
+                                    <button id="writeWWANTryCnt" class="cmd cmd-button" disabled onclick="writeWWANTryCnt()">WWAN尝试次数</button>
+                                    <input type="text" id="WWANTRY" placeholder="输入WWAN尝试联网次数" class="cmd min-w-[150px] flex-grow" disabled>
+                                </div>
+                            </td>
+                            <td class="p-3 border-b border-gray-300"><label for="writeWWANTryCnt" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="readWWANTryCnt" class="cmd cmd-button" disabled onclick="readWWANTryCnt()">查询WWAN尝试次数</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="readWWANTryCnt" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300">
+                                <div class="flex items-center gap-2">
+                                    <button id="writeNTNsendData" class="cmd cmd-button" disabled onclick="writeNTNsendData()">NTN内容自定义</button>
+                                    <input type="text" id="NTNsend" placeholder="输入NTN内容" class="cmd min-w-[150px] flex-grow" disabled>
+                                </div>
+                                <div class="flex items-center gap-2"> <span class="text-sm">模式:</span> <input type="radio" id="modeAscii" name="ntnMode" value="ascii" checked >
+                                    <label for="modeAscii" class="text-sm cursor-pointer">ASCII</label>
+                        
+                                    <input type="radio" id="modeHex" name="ntnMode" value="hex" >
+                                    <label for="modeHex" class="text-sm cursor-pointer">16进制 (Hex)</label>
+                                </div>
+                            </td>
+                            <td class="p-3 border-b border-gray-300"><label for="writeNTNsendData" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="readNTNsendData" class="cmd cmd-button" disabled onclick="readNTNsendData()">查询NTN发送内容</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="readNTNsendData" class="rsp"></label></td>
+                        </tr>
+
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="readservingcell" class="cmd cmd-button" disabled onclick="readservingcell()">查询搜索信号情况</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="readservingcell" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="UDP_WEB" class="cmd cmd-button" disabled onclick="window.open('https://s1.oyzh.top/udp', '_blank')">点击打开UDP卫星消息调试平台</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="UDP_WEB" class="rsp"></label></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </details>
+
+        <details class="mb-6 bg-white shadow-md rounded-lg p-4">
+            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">出厂测试</summary>
+            <div class="overflow-x-auto mt-4">
+                <table class="w-full border-collapse">
+                    <thead class="bg-gray-200">
+                         <tr>
+                            <th class="text-left p-3 border-b border-gray-300 min-w-[250px] md:min-w-[300px]">命令</th>
+                            <th class="text-left p-3 border-b border-gray-300 min-w-[200px]">响应</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="AT+FLASHRWTEST?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">外部Flash测试</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="AT+FLASHRWTEST?" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="AT+CHARGER?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">充电芯片状态</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="AT+CHARGER?" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id="AT+LS?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">查询文件目录</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for="AT+LS?" class="rsp"></label></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </details>
+
+        <details class="mb-6 bg-white shadow-md rounded-lg p-4">
+            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">网络与射频测试</summary>
+            <div class="overflow-x-auto mt-4">
+                <table class="w-full border-collapse">
+                    <thead class="bg-gray-200">
+                         <tr>
+                            <th class="text-left p-3 border-b border-gray-300 min-w-[250px] md:min-w-[300px]">命令</th>
+                            <th class="text-left p-3 border-b border-gray-300 min-w-[200px]">响应</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id=">at+cfun=1" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">modem开启</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for=">at+cfun=1" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id=">at+cfun=0" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">modem关闭</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for=">at+cfun=0" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300">
+                                <button id=">at+cfun?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">
+                                    modem开启状态查询<br><span class="text-[8pt] text-gray-500">0:未开启; 1:开启</span>
+                                </button>
+                            </td>
+                            <td class="p-3 border-b border-gray-300"><label for=">at+cfun?" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300">
+                                <button id=">at+cgdcont?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">
+                                    设备IP地址查询<br><span class="text-[8pt] text-gray-500">返回IP地址即已联网</span>
+                                </button>
+                            </td>
+                            <td class="p-3 border-b border-gray-300"><label for=">at+cgdcont?" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300">
+                                <button id=">at+cesq" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">
+                                    4G信号查询<br><span class="text-[8pt] text-gray-500">后两个数字RSRQ, RSRP</span>
+                                </button>
+                            </td>
+                            <td class="p-3 border-b border-gray-300"><label for=">at+cesq" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id=">at%xcband" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">4G频段查询</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for=">at%xcband" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300">
+                                <button id=">AT%XRFTEST=1,1,5,8300,17,0,3,12,0,0,0,0,0" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">
+                                    开启RFTEST模式<br><span class="text-[8pt] text-red-500">必须modem关闭时使用<br>(NB/B5/830M/17db)</span>
+                                </button>
+                            </td>
+                            <td class="p-3 border-b border-gray-300"><label for=">AT%XRFTEST=1,1,5,8300,17,0,3,12,0,0,0,0,0" class="rsp"></label></td>
+                        </tr>
+                        <tr class="hover:bg-gray-100">
+                            <td class="p-3 border-b border-gray-300"><button id=">AT%XRFTEST=1,0" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">关闭RFTEST模式</button></td>
+                            <td class="p-3 border-b border-gray-300"><label for=">AT%XRFTEST=1,0" class="rsp"></label></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="mt-4 space-y-2">
+                <div class="flex flex-wrap gap-2">
+                    <button id="startSensorRTTransfer" class="cmd cmd-button" disabled onclick="sensorRTTransfer(1)">开始采集传感器数据</button>
+                    <button id="stopSensorRTTransfer" class="cmd cmd-button" disabled onclick="sensorRTTransfer(0)">停止采集传感器数据</button>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button id="enableGnssReceive" class="cmd cmd-button" disabled onclick="gnssReceive(1)">开始GNSS接收</button>
+                    <button id="disableGnssReceive" class="cmd cmd-button" disabled onclick="gnssReceive(0)">停止GNSS接收</button>
+                </div>
+            </div>
+        </details>
+
+
+
+        <details class="mb-6 bg-white shadow-md rounded-lg p-4">
+            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">自定义命令</summary>
+            <div class="overflow-x-auto mt-4">
+                <table class="w-full border-collapse">
+                    <tbody>
+                        <div class="mb-4">
+                            <label for="customCmd" class="block font-medium text-gray-700 mb-1">自定义命令</label>
+                            <div class="flex items-center gap-2">
+                                <input type="text" id="customCmd" placeholder="输入自定义命令并按回车" class="min-w-[200px] sm:min-w-[320px] flex-grow">
+                                <input type="checkbox" id="clearOnSent" checked class="form-checkbox h-5 w-5 text-blue-600 rounded">
+                                <label for="clearOnSent" class="text-sm text-gray-600">自动添加\r\n</label>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label for="appCmd" class="block font-medium text-gray-700 mb-1">发送app命令</label>
+                            <input type="text" id="appCmd" placeholder="输入app命令并按回车" class="min-w-[200px] sm:min-w-[320px] w-full">
+                        </div>
+                        
+                        <div>
+                            <label class="block font-medium text-gray-700 mb-1">命令响应:</label>
+                            <div id="customCmdRsp" class="block max-h-[150px] h-[150px] overflow-y-auto bg-gray-100 p-2 border border-gray-300 rounded-md text-sm"></div>
+                        </div>
+                    </tbody>
+                </table>
+            </div>
+        </details>
+
+        </details> <details id="appAdvancedCommandsSection" class="mb-6 bg-white shadow-md rounded-lg p-4">
+            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">App 高级命令</summary>
+            <div class="overflow-x-auto mt-4 space-y-4">
+                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;v\&quot;}')">查询版本号</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;b\&quot;}')">查询电量</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;f\&quot;}')">查围栏状态</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;f1\&quot;}')">开启围栏</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;f0\&quot;}')">关闭围栏</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;fe\&quot;}')">查激活围栏</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;fl\&quot;}')">查围栏列表</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;st\&quot;}')">查询时间</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;dir\&quot;}')">片内查询目录</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;ss\&quot;}')">查询剩余空间</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;di\&quot;}')">查询设备信息</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sys.reboot\&quot;}')">重启设备</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sys.poweroff\&quot;}')">船运模式</button>
+                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;?\&quot;}')">Info Dump</button>
+                    <button class="cmd cmd-button bg-orange-500 hover:bg-orange-700" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sec.format\&quot;}')">格式化Flash</button>
+                    <button class="cmd cmd-button bg-orange-500 hover:bg-orange-700" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;settings.format\&quot;}')">重置Setting</button>
+                </div>
+
+                <div>
+                    <label class="block font-medium text-gray-700 mb-1">App命令响应 (SATELLAI服务):</label>
+                    <div id="appCmdRspLog" class="block max-h-[200px] h-[200px] overflow-y-auto bg-gray-100 p-2 border border-gray-300 rounded-md text-sm font-mono"></div>
+                </div>
+
+                <hr>
+
+                <div class="p-2 border rounded-md">
+                    <h4 class="font-medium mb-2 text-gray-700">激活/禁用设备围栏</h4>
+                    <div class="flex flex-wrap items-center gap-2 mb-2">
+                        <button class="cmd cmd-button" disabled onclick="handleAppActivateFence()">激活围栏 (fe1)</button>
+                        <input type="text" id="app_fe1_param_fid" placeholder="围栏ID (e.g., f-1234)" class="cmd cmd-input flex-grow min-w-[200px]" disabled>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button class="cmd cmd-button" disabled onclick="handleAppDeactivateFence()">禁用围栏 (fe0)</button>
+                        <input type="text" id="app_fe0_param_fid" placeholder="围栏ID (e.g., f-1234)" class="cmd cmd-input flex-grow min-w-[200px]" disabled>
+                    </div>
+                </div>
+
+                <div class="p-2 border rounded-md">
+                    <h4 class="font-medium mb-1 text-gray-700">添加围栏 (fa)</h4>
+                    <iframe id="fenceEditorFrame" src="gps.html" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; border:none; z-index:1000;"></iframe>
+                    <button id="openEditorBtn" class="cmd cmd-button" disabled onclick="openFenceEditor()">打开围栏编辑器</button>
+                    <div id="dataList">
+                        <p class="text-gray-500 italic">尚未接收到数据。请打开编辑器并提交一个围栏。</p>
+                    </div>
+                </div>
+
+                <div class="p-2 border rounded-md">
+                    <h4 class="font-medium mb-2 text-gray-700">删除围栏 (fd)</h4>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button class="cmd cmd-button" disabled onclick="handleAppDeleteFence()">删除围栏</button>
+                        <input type="text" id="app_fd_param_fids" placeholder="围栏ID列表, 逗号分隔 (e.g., f-1,f-2)" class="cmd cmd-input flex-grow min-w-[260px]" disabled>
+                    </div>
+                </div>
+
+                <div class="p-2 border rounded-md">
+                     <h4 class="font-medium mb-2 text-gray-700">围栏事件调试指令 (debug.event_gnss)</h4>
+                     <div class="flex flex-wrap items-center gap-2">
+                        <input type="number" id="app_debug_event_type" min="1" max="6" placeholder="Type (1-6)" class="cmd cmd-input flex-grow" disabled>
+                        <input type="number" id="app_debug_event_lat" step="any" placeholder="Latitude" class="cmd cmd-input flex-grow" disabled>
+                        <input type="number" id="app_debug_event_lng" step="any" placeholder="Longitude" class="cmd cmd-input flex-grow" disabled>
+                        <button class="cmd cmd-button" disabled onclick="handleAppDebugEventGnss()">发送调试事件</button>
+                     </div>
+                     <p class="text-xs text-gray-500 mt-1">Type: 1:lost, 2:fix, 3:secured, 4:approaching, 5:breach, 6:escaped</p>
+                </div>
+
+            </div>
+        </details>
+    </div>
+<script type="text/javascript">
+        // document.addEventListener('DOMContentLoaded', () => { if (prompt("请输入访问密码：") !== 'satellai') document.body.innerHTML = ''; });
+        uuidSvcSatellai = '00000001-ffff-4fff-8fff-5a7e11a1ffff';
+        uuidCharApp = '00000002-ffff-4fff-8fff-5a7e11a1ffff';
+        uuidCharDfu = '00000005-ffff-4fff-8fff-5a7e11a1ffff';
+        uuidCharRtt = '00000008-ffff-4fff-8fff-5a7e11a1ffff';
+        uuidSvcNus = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+        uuidCharWrite = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+        uuidCharNotify = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+
+        class Peripheral {
+            constructor() {
+                this.device = null;
+                this.onDisconnected = this.onDisconnected.bind(this);
+            }
+
+            async request() {
+                const filt = document.getElementById('nameFilter').value;
+                this.device = await navigator.bluetooth.requestDevice({
+                    // 'acceptAllDevices': true,
+                    // 'filters': [{ 'namePrefix': 'SATELLAI' }],
+                    'filters': [{ 'namePrefix': filt?filt:'SATELLAI' }],
+                    'optionalServices': [uuidSvcSatellai, uuidSvcNus]
+                });
+                if (!this.device) throw 'NO DEVICE SELECTED';
+                this.device.addEventListener('gattserverdisconnected', this.onDisconnected);
+            }
+
+            async connect() {
+                await this.device.gatt.connect();
+                console.log('[INFO]CONNECTED');
+                const status = document.getElementById('status');
+                status.innerText = `已连接: ${this.device.name}`; status.style.color = 'green';
+                document.querySelectorAll('.cmd').forEach(btn => btn.disabled = false);
+                document.querySelectorAll('.rsp').forEach(lbl => lbl.innerText = '');
+            }
+
+            disconnect() {
+                this.device.gatt.disconnect();
+                this.device = null;
+            }
+
+            onDisconnected() {
+                console.log('[WARN]DISCONNECTED');
+                const status = document.getElementById('status');
+                status.innerText = '未连接'; status.style.color = 'red';
+                document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
+            }
+
+            async sendCmd(svc, ch, data) {
+                if (typeof data === 'string') data = new TextEncoder().encode(data);
+                const service = await this.device.gatt.getPrimaryService(svc);
+                const characteristic = await service.getCharacteristic(ch);
+                await characteristic.writeValueWithoutResponse(data);
+            }
+
+            async startCmdNotifications(svc, ch, listener) {
+                const service = await this.device.gatt.getPrimaryService(svc);
+                const characteristic = await service.getCharacteristic(ch);
+                await characteristic.startNotifications();
+                characteristic.addEventListener('characteristicvaluechanged', listener);
+            }
+
+            async stopCmdNotifications(svc, ch, listener) {
+                const service = await this.device.gatt.getPrimaryService(svc);
+                const characteristic = await service.getCharacteristic(ch);
+                await characteristic.stopNotifications();
+                characteristic.removeEventListener('characteristicvaluechanged', listener);
+            }
+        }
+
+        const peripheral = new Peripheral();
+
+        let resolveData = null;
+        let resolveDfu = null;
+        let resolveApp = null;
+
+        document.getElementById('scanAndConnect').addEventListener('click', async event => {
+            await peripheral.request();
+            await peripheral.connect();
+            await peripheral.startCmdNotifications(uuidSvcNus, uuidCharNotify, event => {
+                if (resolveData) {
+                    resolveData(new TextDecoder().decode(event.target.value));
+                    resolveData = null;
+                }
+                else console.warn(event.target.value);
+            });
+            await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharApp, event => {
+                if (resolveApp) {
+                    resolveApp(new TextDecoder().decode(event.target.value));
+                    resolveApp = null;
+                }
+                else console.warn(event.target.value);
+            });
+            await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharDfu, event => {
+                if (resolveDfu) {
+                    resolveDfu(event.target.value);
+                    resolveDfu = null;
+                }
+                else console.warn(event.target.value);
+            });
+        });
+
+        function timestamp() {
+            const now = new Date();
+            return `${now.getHours().toFixed(2)}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}.${String(now.getMilliseconds()).padStart(2,'0')}`; }
+
+        document.getElementById('customCmd').addEventListener('keyup', async event => {
+            if (event.key === 'Enter') {
+                let cmd = event.target.value.trim();
+                if (document.getElementById('clearOnSent').checked) cmd += '\r\n';
+                const lbl = document.getElementById('customCmdRsp');
+                const now = new Date();
+                setTimeout(async () => {
+                    await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, cmd);
+                }, 0);
+                while (true) {
+                    rsp = await new Promise(resolve => (resolveData = resolve));
+                    console.log('rsp: ' + rsp);
+                    lbl.innerText += `${timestamp()}> ${rsp}`;
+                    lbl.scrollTop = lbl.scrollHeight;
+                    if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
+                }
+            }
+        });
+
+        document.getElementById('appCmd').addEventListener('keyup', async event => {
+            if (event.key === 'Enter') {
+                let cmd = event.target.value.trim();
+                const lbl = document.getElementById('customCmdRsp');
+                const now = new Date();
+                setTimeout(async () => {
+                    await peripheral.sendCmd(uuidSvcSatellai, uuidCharApp, cmd);
+                }, 0);
+                // while (true) {
+                    rsp = await new Promise(resolve => (resolveApp = resolve));
+                    console.log('rsp: ' + rsp);
+                    lbl.innerText += `${timestamp()}> ${rsp}`;
+                    lbl.scrollTop = lbl.scrollHeight;
+                    // if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
+                // }
+                // if (document.getElementById('clearOnSent').checked) event.target.value = '';
+            }
+        });
+
+        document.getElementById('disconnect').addEventListener('click', async event => {
+            //忽略取消订阅
+            peripheral.disconnect();
+        });
+
+        function chooseFile(input) {
+            console.log(input);
+            const file = input.files[0];
+            if (file) {
+                console.log(file);
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const fileContent = new Uint8Array(e.target.result);
+                    console.log(`fileContent.length=${fileContent.length}`);
+                    const dest = file.name.includes('9160');
+                    await firmware_upgrade(fileContent, dest);
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        }
+
+        function sendCert(input) {
+            console.log(input);
+            const file = input.files[0];
+            if (file) {
+                console.log(file);
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const fileContent = new Uint8Array(e.target.result);
+                    console.log(`fileContent.length=${fileContent.length}`);
+                    let type;
+                    if (file.name.toLowerCase().includes('root')) type = 0;
+                    else if (file.name.toLowerCase().includes('cert')) type = 1;
+                    else if (file.name.toLowerCase().includes('key')) type = 2;
+                    await cert_transfer(fileContent, type);
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        }
+
+        function sendFile(input) {
+            console.log(input);
+            const file = input.files[0];
+            if (file) {
+                console.log(file);
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const fileContent = new Uint8Array(e.target.result);
+                    console.log(`fileContent.length=${fileContent.length}`);
+                    const path = document.getElementById('genericfilePath').value;
+                    await file_transfer(fileContent, (path?(path+'/'):'')+file.name);
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        }
+
+        async function file_transfer(content, name) {
+            console.log(`[INFO]SEND START: ${name}`);
+            const mtu = 247;
+            const size = content.length;
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, new Uint8Array([1]));
+            }, 0);
+            let rsp = await new Promise(resolve => (resolveDfu = resolve));
+            console.log(new Uint8Array(rsp.buffer)[0]);
+            setTimeout(async () => {
+                const arr = new Uint8Array(6 + name.length + 1);
+                arr.set(new Uint8Array([124, 4+name.length+1, size, size>>8, size>>16, size>>24]));
+                arr.set(new TextEncoder().encode(name), 6);
+                arr.set(new Uint8Array([0]), 6+name.length);
+                console.log(arr);
+                await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, arr);
+            }, 0);
+            rsp = await new Promise(resolve => (resolveDfu = resolve));
+            console.log(rsp.getUint8(0));
+            let idx = 0;
+
+            let crc = 0;
+            async function send_buf(base, BLOCK_SIZE) {
+                let offset = 0;
+                while (offset < BLOCK_SIZE) {
+                    let chunkSize = mtu-(mtu>255?4:3);
+                    if (offset + chunkSize > BLOCK_SIZE) chunkSize = BLOCK_SIZE - offset;
+                    const chunk = content.slice(base + offset, base + offset + chunkSize);
+                    const arr = new Uint8Array(chunkSize+(mtu>255?4:3)).fill(0);
+                    if (mtu>255) {arr[0] = 125|0x80; arr[1] = (chunkSize+1)&0xff; arr[2] = (chunkSize+1)>>8; arr[3] = idx; arr.set(chunk, 4);}
+                    else {arr[0] = 125; arr[1] = chunkSize+1; arr[2] = idx; arr.set(chunk, 3);}
+                    await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, arr); 
+                    // rsp = await new Promise(resolve => (resolveDfu = resolve));
+                    // console.log(rsp);
+                    crc = crc8(chunk, crc);
+                    // console.log(`id=${idx}, offset=${offset}, chunkSize=${chunkSize}, crc=0x${crc.toString(16)}`);
+                    offset += chunkSize;
+                    idx++;
+                }
+                setTimeout(async () => {
+                    await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, new Uint8Array([126, 0]));
+                }, 0);
+                rsp = await new Promise(resolve => (resolveDfu = resolve));
+                const crc_rsp = rsp.getUint8(0);
+                if (crc_rsp !== crc) throw 'CRC ERROR';
+                return offset;
+            }
+            const t0 = Date.now();
+            let base = 0;
+            while (base < size) {
+                const left = size - base;
+                // console.log(`base=${base}, left=${left}`);
+                if (left <= 4096) {
+                    base += await send_buf(base, left);
+                    console.log(`progress: ${(base / size * 100).toFixed(2)}%`)
+                    break;
+                }
+                base += await send_buf(base, 4096);
+                console.log(`progress: ${(base / size * 100).toFixed(2)}%`)
+            }
+            const t1 = Date.now();
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, new Uint8Array([127, 0]));
+            }, 0);
+            rsp = await new Promise(resolve => (resolveDfu = resolve));
+            console.log(rsp.getUint32(0, true));
+            console.log(`[INFO]SENT ${size} BYTES in ${t1 - t0}ms, TRANSFER RATE: ${(size / (t1 - t0)).toFixed(1)} KB/s`);
+        }
+
+        async function cert_transfer(cert, type) {
+            console.log('[INFO]SEND START');
+            // const cert = new Uint8Array(10000);
+            // cert.fill(0x5a);
+            const mtu = 247;
+            const size = cert.length;
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, new Uint8Array([1]));
+            }, 0);
+            let rsp = await new Promise(resolve => (resolveDfu = resolve));
+            console.log(new Uint8Array(rsp.buffer)[0]);
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, new Uint8Array([120, 5, size, size>>8, size>>16, size>>24, type]));
+            }, 0);
+            rsp = await new Promise(resolve => (resolveDfu = resolve));
+            console.log(new Uint8Array(rsp.buffer)[0]);
+            let idx = 0;
+
+            let crc = 0;
+            async function send_buf(base, BLOCK_SIZE) {
+                let offset = 0;
+                while (offset < BLOCK_SIZE) {
+                    let chunkSize = mtu-(mtu>255?4:3);
+                    if (offset + chunkSize > BLOCK_SIZE) chunkSize = BLOCK_SIZE - offset;
+                    const chunk = cert.slice(base + offset, base + offset + chunkSize);
+                    const arr = new Uint8Array(chunkSize+(mtu>255?4:3)).fill(0);
+                    if (mtu>255) {arr[0] = 11|0x80; arr[1] = (chunkSize+1)&0xff; arr[2] = (chunkSize+1)>>8; arr[3] = idx; arr.set(chunk, 4);}
+                    else {arr[0] = 121; arr[1] = chunkSize+1; arr[2] = idx; arr.set(chunk, 3);}
+                    await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, arr); 
+                    // rsp = await new Promise(resolve => (resolveDfu = resolve));
+                    // console.log(rsp);
+                    crc = crc8(chunk, crc);
+                    // console.log(`id=${idx}, offset=${offset}, crc=0x${crc.toString(16)}`);
+                    offset += chunkSize;
+                    idx++;
+                }
+                setTimeout(async () => {
+                    await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, new Uint8Array([122, 0]));
+                }, 0);
+                rsp = await new Promise(resolve => (resolveDfu = resolve));
+                // console.log(new Uint8Array(rsp.buffer)[0].toString(16));
+                return offset;
+            }
+            const t0 = Date.now();
+            let base = 0;
+            while (base < size) {
+                const left = size - base;
+                // console.log(`base=${base}, left=${left}`);
+                if (left <= 4096) {
+                    base += await send_buf(base, left);
+                    console.log(`progress: ${(base / size * 100).toFixed(2)}%`)
+                    break;
+                }
+                base += await send_buf(base, 4096);
+                console.log(`progress: ${(base / size * 100).toFixed(2)}%`)
+            }
+            const t1 = Date.now();
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, new Uint8Array([123, 0]));
+            }, 0);
+            rsp = ''
+            while (true) {
+                rsp += new TextDecoder().decode(await new Promise(resolve => (resolveDfu = resolve)));
+                if (rsp.endsWith('OK\r\n')) break;
+            }
+            console.log(rsp);
+            console.log(`[INFO]SENT ${size} BYTES in ${t1 - t0}ms, TRANSFER RATE: ${(size / (t1 - t0)).toFixed(1)} KB/s`);
+        }
+
+        async function firmware_upgrade(fw, dest) {
+            console.log('[INFO]SEND START');
+            // const fw = new Uint8Array(10000);
+            // fw.fill(0x5a);
+            const mtu = 247;
+            const size = fw.length;
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, new Uint8Array([dest]));
+            }, 0);
+            let rsp = await new Promise(resolve => (resolveDfu = resolve));
+            console.log(new Uint8Array(rsp.buffer)[0]);
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, new Uint8Array([10, 4, size, size>>8, size>>16, size>>24]));
+            }, 0);
+            rsp = await new Promise(resolve => (resolveDfu = resolve));
+            console.log(new Uint8Array(rsp.buffer)[0]);
+            let idx = 0;
+
+            let crc = 0;
+            async function send_buf(base, BLOCK_SIZE) {
+                let offset = 0;
+                while (offset < BLOCK_SIZE) {
+                    let chunkSize = mtu-(mtu>255?4:3);
+                    if (offset + chunkSize > BLOCK_SIZE) chunkSize = BLOCK_SIZE - offset;
+                    const chunk = fw.slice(base + offset, base + offset + chunkSize);
+                    const arr = new Uint8Array(chunkSize+(mtu>255?4:3)).fill(0);
+                    if (mtu>255) {arr[0] = 11|0x80; arr[1] = (chunkSize+1)&0xff; arr[2] = (chunkSize+1)>>8; arr[3] = idx; arr.set(chunk, 4);}
+                    else {arr[0] = 11; arr[1] = chunkSize+1; arr[2] = idx; arr.set(chunk, 3);}
+                    await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, arr); 
+                    // rsp = await new Promise(resolve => (resolveDfu = resolve));
+                    // console.log(rsp);
+                    crc = crc8(chunk, crc);
+                    // console.log(`id=${idx}, offset=${offset}, crc=0x${crc.toString(16)}`);
+                    offset += chunkSize;
+                    idx++;
+                }
+                setTimeout(async () => {
+                    await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, new Uint8Array([12, 0]));
+                }, 0);
+                rsp = await new Promise(resolve => (resolveDfu = resolve));
+                // console.log(new Uint8Array(rsp.buffer)[0].toString(16));
+                return offset;
+            }
+            const t0 = Date.now();
+            let base = 0;
+            const lbl = document.querySelector(`label[for="fwfile"]`);
+            while (base < size) {
+                const left = size - base;
+                // console.log(`base=${base}, left=${left}`);
+                if (left <= 4096) {
+                    base += await send_buf(base, left);
+                    console.log(`progress: ${(base / size * 100).toFixed(2)}%`)
+                    lbl.innerText = `固件升级: ${(base / size * 100).toFixed(2)}%`;
+                    break;
+                }
+                base += await send_buf(base, 4096);
+                console.log(`progress: ${(base / size * 100).toFixed(2)}%`)
+                lbl.innerText = `固件升级: ${(base / size * 100).toFixed(2)}%`;
+            }
+            const t1 = Date.now();
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcSatellai, uuidCharDfu, new Uint8Array([13, 0]));
+            }, 0);
+            rsp = await new Promise(resolve => (resolveDfu = resolve));
+            console.log(new Uint8Array(rsp.buffer)[0]);
+            console.log(`[INFO]SENT ${size} BYTES in ${t1 - t0}ms, TRANSFER RATE: ${(size / (t1 - t0)).toFixed(1)} KB/s`);
+        }
+
+        async function sendCmdAndWaitForOK(btn) {
+            document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
+            const lbl = document.querySelector(`label[for="${btn.id}"]`);
+            lbl.innerText = '执行中...'; lbl.style.color ='gray';
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, btn.id); 
+            }, 0);
+            let rsp = '';
+            while (true) {
+                rsp += await new Promise(resolve => (resolveData = resolve));
+                console.log('rsp: ' + rsp);
+                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
+            }
+            lbl.innerText = rsp;
+            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
+            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+            document.querySelectorAll('.cmd').forEach(btn => btn.disabled = false);
+        }
+
+        const sensorRTTransferHandler = event => {
+            const sensordata = new Uint8Array(event.target.value.buffer);
+            console.log(sensordata[0]);
+        };
+        async function sensorRTTransfer(on) {
+            if (on) {
+                await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharRtt, sensorRTTransferHandler);
+                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+SENSOR=1');
+            } else {
+                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+SENSOR=0');
+                await peripheral.stopCmdNotifications(uuidSvcSatellai, uuidCharRtt, sensorRTTransferHandler);
+            }
+        }
+
+        const gnssReceiveHandler = event => {
+            console.log(new TextDecoder().decode(event.target.value));
+        };
+        async function gnssReceive(on) {
+            if (on) {
+                await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharRtt, gnssReceiveHandler);
+                setTimeout(async () => {
+                    await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+GNSS1TEST=1');                    
+                }, 0);
+                let rsp = await new Promise(resolve => (resolveData = resolve));
+                console.log(rsp);
+            }
+             else {
+                setTimeout(async () => {
+                    await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+GNSS1TEST=0');                    
+                }, 0);
+                let rsp = await new Promise(resolve => (resolveData = resolve));
+                console.log(rsp);
+                await peripheral.stopCmdNotifications(uuidSvcSatellai, uuidCharRtt, gnssReceiveHandler);
+            }
+        }
+
+        async function readSN() {
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+SN?');                    
+            }, 0);
+            let rsp = '';
+            while (true) {
+                rsp += await new Promise(resolve => (resolveData = resolve));
+                console.log('rsp: ' + rsp);
+                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
+            }
+            console.log(rsp);
+            const lbl = document.querySelector(`label[for="readSN"]`);
+            lbl.innerText = rsp;
+            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
+            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+        }
+
+        async function writeWWANTryCnt() {
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+WWANTRY='+document.getElementById('WWANTRY').value);                    
+            }, 0);
+            let rsp = '';
+            while (true) {
+                rsp += await new Promise(resolve => (resolveData = resolve));
+                console.log('rsp: ' + rsp);
+                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
+            }
+            console.log(rsp);
+            const lbl = document.querySelector(`label[for="writeWWANTryCnt"]`);
+            lbl.innerText = rsp;
+            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
+            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+        }
+
+
+        async function readWWANTryCnt() {
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+WWANTRY?');                    
+            }, 0);
+            let rsp = '';
+            while (true) {
+                rsp += await new Promise(resolve => (resolveData = resolve));
+                console.log('rsp: ' + rsp);
+                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
+            }
+            console.log(rsp);
+            const lbl = document.querySelector(`label[for="readWWANTryCnt"]`);
+            lbl.innerText = rsp;
+            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
+            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+        }
+
+        async function writeNTNsendData() {
+
+            const ntnSendInput = document.getElementById('NTNsend');
+            const ntnValue = ntnSendInput.value.trim();
+            const selectedMode = document.querySelector('input[name="ntnMode"]:checked').value;
+            const responseLabel = document.querySelector('label.rsp[for="writeNTNsendData"]');
+
+            let dataToSend;
+            let parsedBytes = [];
+
+            responseLabel.textContent = ''; // Clear previous response/error
+
+            if (!ntnValue) {
+                responseLabel.textContent = "错误：输入内容不能为空 (Error: Input cannot be empty)";
+                ntnSendInput.focus();
+                return;
+            }
+
+            if (selectedMode === 'ascii') {
+                // In ASCII mode, the string itself is the data (or convert to byte array if needed)
+                // For example, converting string to an array of character codes (bytes)
+                for (let i = 0; i < ntnValue.length; i++) {
+                    parsedBytes.push(ntnValue.charCodeAt(i));
+                }
+                dataToSend = ntnValue; // Or parsedBytes if you need the byte array
+                responseLabel.textContent = `ASCII模式发送: "${dataToSend}" (字节: ${parsedBytes.join(', ')})`;
+                console.log("Processing as ASCII:", dataToSend);
+                console.log("ASCII Byte Array:", parsedBytes);
+
+            } else if (selectedMode === 'hex') {
+                // In Hex mode, parse "B4C7" as 0xB4, 0xC7
+                if (ntnValue.length % 2 !== 0) {
+                    responseLabel.textContent = "错误：16进制内容长度必须为偶数";
+                    ntnSendInput.focus();
+                    return;
+                }
+                if (!/^[0-9a-fA-F]+$/.test(ntnValue)) {
+                    responseLabel.textContent = "错误：16进制内容包含无效字符";
+                    ntnSendInput.focus();
+                    return;
+                }
+
+                try {
+                    for (let i = 0; i < ntnValue.length; i += 2) {
+                        const byteHex = ntnValue.substring(i, i + 2);
+                        const byteInt = parseInt(byteHex, 16);
+                        if (isNaN(byteInt)) { // Should be caught by regex, but good to double check
+                            throw new Error("Invalid hex byte: " + byteHex);
+                        }
+                        parsedBytes.push(byteInt);
+                    }
+                    dataToSend = parsedBytes; // This will be an array of numbers like [180, 199] for "B4C7"
+                    responseLabel.textContent = `16进制模式发送 (字节): ${parsedBytes.map(b => '0x' + b.toString(16).toUpperCase().padStart(2, '0')).join(', ')}`;
+                    console.log("Processing as Hex. Input:", ntnValue);
+                    console.log("Hex Byte Array:", parsedBytes);
+                    console.log("COMMAND Byte Array:", 'AT+NTNDATA=0,"'+ parsedBytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('') +'"');
+                } catch (e) {
+                    responseLabel.textContent = "错误：解析16进制内容失败 - " + e.message;
+                    console.error("Hex parsing error:", e);
+                    return;
+                }
+            }
+
+
+
+            setTimeout(async () => {
+                if (selectedMode === 'ascii')
+                    await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+NTNDATA=0,"'+document.getElementById('NTNsend').value+'"');          
+                else
+                    await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+NTNDATA=1,"'+ parsedBytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('') +'"');          
+            }, 0);
+            let rsp = '';
+            while (true) {
+                rsp += await new Promise(resolve => (resolveData = resolve));
+                console.log('rsp: ' + rsp);
+                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
+            }
+            console.log(rsp);
+            const lbl = document.querySelector(`label[for="writeNTNsendData"]`);
+            lbl.innerText = rsp;
+            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
+            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+        }
+
+        // Add event listeners to radio buttons to potentially clear input or provide feedback on mode change
+        document.getElementById('modeAscii').addEventListener('change', handleModeChange);
+        document.getElementById('modeHex').addEventListener('change', handleModeChange);
+
+        function handleModeChange() {
+            const ntnSendInput = document.getElementById('NTNsend');
+            const responseLabel = document.querySelector('label.rsp[for="writeNTNsendData"]');
+            const selectedMode = document.querySelector('input[name="ntnMode"]:checked').value;
+
+            // Optional: Clear input or provide guidance when mode changes
+            // ntnSendInput.value = ''; // Uncomment to clear input on mode change
+            if (selectedMode === 'ascii') {
+                ntnSendInput.placeholder = "输入ASCII内容 (e.g., Hello)";
+            } else {
+                ntnSendInput.placeholder = "输入16进制内容 (e.g., B4C7)";
+            }
+            responseLabel.textContent = `模式已切换到: ${selectedMode === 'ascii' ? 'ASCII' : '16进制'}`;
+        }
+
+        // Initialize placeholder based on default checked mode when controls are enabled
+        // Call this if/when you enable the controls
+        function initializeInputPlaceholder() {
+            const ntnSendInput = document.getElementById('NTNsend');
+            if (!ntnSendInput.disabled) { // Only if it's enabled
+                if (document.getElementById('modeAscii').checked) {
+                    ntnSendInput.placeholder = "输入ASCII内容 (e.g., Hello)";
+                } else {
+                    ntnSendInput.placeholder = "输入16进制内容 (e.g., B4C7)";
+                }
+            }
+        }
+
+
+        async function readNTNsendData() {
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+NTNDATA?');                    
+            }, 0);
+            let rsp = '';
+            while (true) {
+                rsp += await new Promise(resolve => (resolveData = resolve));
+                console.log('rsp: ' + rsp);
+                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
+            }
+            console.log(rsp);
+            const lbl = document.querySelector(`label[for="readNTNsendData"]`);
+            lbl.innerText = rsp;
+            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
+            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+        }
+
+        async function readservingcell() {
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+SERVINGCELL?');                    
+            }, 0);
+            let rsp = '';
+            while (true) {
+                rsp += await new Promise(resolve => (resolveData = resolve));
+                console.log('rsp: ' + rsp);
+                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
+            }
+            console.log(rsp);
+            const lbl = document.querySelector(`label[for="readservingcell"]`);
+            lbl.innerText = rsp;
+            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
+            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+        }
+        
+        
+        async function readDEVstate() {
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+DEVSTATE?');
+            }, 0);
+            let rsp = '';
+            while (true) {
+                rsp += await new Promise(resolve => (resolveData = resolve));
+                console.log('rsp: ' + rsp);
+                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
+            }
+            console.log('Original rsp: ' + rsp); // Log the original response
+
+            const lbl = document.querySelector(`label[for="readDEVstate"]`);
+            let stateDescription = "无法解析状态"; // Default message: Unable to parse state
+
+            if (rsp.includes('\r\n')) {
+                // Split the response by \r\n. The first part should be the state value.
+                const parts = rsp.split('\r\n');
+                const stateValueString = parts[0]; // e.g., "1"
+
+                // Try to parse the extracted string as an integer
+                const stateValueInt = parseInt(stateValueString, 10);
+
+                if (!isNaN(stateValueInt)) {
+                    // If parsing is successful, get the Chinese description
+                    stateDescription = getBg95ModuleStateDescription(stateValueInt);
+                    console.log(`Parsed state value: ${stateValueInt}, Description: ${stateDescription}`);
+                } else {
+                    console.warn(`Could not parse state value from: ${stateValueString}`);
+                    if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) {
+                        // If it ends with OK or ERROR but we couldn't parse a number before it,
+                        // it might be just "OK\r\n" or "ERROR\r\n" or some other format.
+                        stateDescription = `响应: ${rsp.trim()}`; // Show trimmed response
+                    } else {
+                        stateDescription = `无法解析状态值从: ${rsp.trim()}`; // Unable to parse state value from
+                    }
+                }
+            } else if (rsp.trim() !== '') {
+                // Handle cases where response might not contain \r\n but is not empty
+                stateDescription = `收到响应: ${rsp.trim()}`; // Received response
+            }
+
+
+            lbl.innerText = stateDescription; // Display the Chinese description or other info
+
+            if (rsp.endsWith('OK\r\n')) {
+                lbl.style.color = 'green';
+            } else if (rsp.endsWith('ERROR\r\n')) {
+                lbl.style.color = 'red';
+            } else {
+                lbl.style.color = 'orange'; // Default color for other cases
+            }
+        }
+
+
+        function getBg95ModuleStateDescription(stateValue) {
+
+            /**
+             * BG95_ModuleState C 枚举的对应值和中文描述
+             * Corresponding values and Chinese descriptions for the BG95_ModuleState C enum
+             */
+            const BG95_MODULE_STATE_DESCRIPTIONS = {
+                0: "模组硬件开机",          // MODULE_STATE_INIT_POWERON
+                1: "基础参数初始化",        // MODULE_STATE_INIT_PARAMETERS
+                2: "NTN处理",             // MODULE_STATE_NTN_HANDLE (搜网、注网、PDP上下文激活)
+                3: "UDP处理",             // MODULE_STATE_UDP_HANDLE (打包、打开、连接、上报、等待回应、解析回应、关闭)
+                4: "GSM处理",             // MODULE_STATE_WWAN_HANDLE (搜网、注网、PDP上下文激活)
+                5: "GNSS处理",            // MODULE_STATE_GNSS_HANDLE (采集)
+                6: "MQTT处理",            // MODULE_STATE_MQTT_HANDLE (打包、打开、连接、订阅、上报、等待下发消息、关闭)
+                7: "XTRA数据处理",        // MODULE_STATE_XTRA_HANDLE (更新和检查XTRA数据)
+                8: "低功耗模式",          // MODULE_STATE_LOW_POWER_MODE
+                9: "未知/异常状态"        // MODULE_STATE_CNT (通常 MODULE_STATE_CNT 用于表示枚举成员的数量，也可能被用作错误或默认状态)
+                // 注意：如果 MODULE_STATE_CNT (值为9) 不是一个有效的运行时状态，而是用于定义枚举大小，
+                // 那么在实际应用中，对于接收到的值 9，您可能需要特殊处理或将其视为“未知状态”。
+                // Note: If MODULE_STATE_CNT (value 9) is not a valid runtime state but is used to define the enum size,
+                // you might need to handle the received value 9 specially or treat it as an "unknown state" in practical applications.
+            };
+            // 检查传入的值是否为数字
+            // Check if the input value is a number
+            if (typeof stateValue !== 'number') {
+                console.warn("getBg95ModuleStateDescription: 输入值不是一个数字，已收到:", stateValue);
+                // Input value is not a number, received:
+                return "无效输入 (非数字)"; // Invalid input (not a number)
+            }
+
+            // 尝试从映射中获取描述
+            // Try to get the description from the mapping
+            const description = BG95_MODULE_STATE_DESCRIPTIONS[stateValue];
+
+            if (description) {
+                return description;
+            } else {
+                // 如果枚举值在映射中未定义，则返回一个通用的未知状态提示
+                // If the enum value is not defined in the mapping, return a generic unknown state message
+                console.warn(`getBg95ModuleStateDescription: 未知的模块状态值: ${stateValue}`);
+                // Unknown module state value:
+                return `未知状态 (${stateValue})`; // Unknown state
+            }
+        }
+
+
+        // New helper function to send app commands and display response
+        async function sendAppCommandViaBle(jsonString) {
+            if (!peripheral.device || !peripheral.device.gatt.connected) {
+                const statusLabel = document.getElementById('status');
+                statusLabel.innerText = "设备未连接 (Device not connected)";
+                statusLabel.style.color = 'red';
+                // console.warn("Device not connected. Cannot send app command.");
+                // alert("设备未连接 (Device not connected)"); // Optional: alert user
+                return;
+            }
+            const lbl = document.getElementById('appCmdRspLog');
+            const currentTimestamp = timestamp(); // Get timestamp once
+            lbl.innerText += `${currentTimestamp}< SENT(APP): ${jsonString}\n`; // Log sent command
+            lbl.scrollTop = lbl.scrollHeight;
+
+            // Disable buttons and inputs in the advanced commands section temporarily
+            document.querySelectorAll('#appAdvancedCommandsSection .cmd-button, #appAdvancedCommandsSection .cmd-input, #appAdvancedCommandsSection .cmd-textarea').forEach(el => el.disabled = true);
+
+            try {
+                // Ensure peripheral and gatt are still valid
+                if (peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected) {
+                    await peripheral.sendCmd(uuidSvcSatellai, uuidCharApp, jsonString);
+                    const rsp = await new Promise(resolve => (resolveApp = resolve)); // resolveApp should be set by your notification handler
+                    lbl.innerText += `${currentTimestamp}> RESP(APP): ${rsp}\n`; // Log response
+                    lbl.scrollTop = lbl.scrollHeight;
+                } else {
+                    throw new Error("Device disconnected before command could be fully processed.");
+                }
+            } catch (error) {
+                lbl.innerText += `${currentTimestamp}> ERROR(APP): ${error}\n`;
+                lbl.scrollTop = lbl.scrollHeight;
+                console.error("Error sending app command or receiving response:", error);
+            } finally {
+                // Re-enable buttons and inputs in the advanced commands section, respecting initial disabled state if any
+                document.querySelectorAll('#appAdvancedCommandsSection .cmd-button, #appAdvancedCommandsSection .cmd-input, #appAdvancedCommandsSection .cmd-textarea').forEach(el => {
+                    // Only re-enable if the device is still connected
+                    if (peripheral.device && peripheral.device.gatt.connected) {
+                        el.disabled = false;
+                    }
+                });
+            }
+        }
+
+        // --- Specific command handlers ---
+
+        function handleAppActivateFence() {
+            const fidInput = document.getElementById('app_fe1_param_fid');
+            const fid = fidInput.value.trim();
+            if (!fid) { alert('请输入要激活的围栏ID (Please enter Fence ID to activate)'); fidInput.focus(); return; }
+            const command = { c: 'fe1', p: [fid] };
+            sendAppCommandViaBle(JSON.stringify(command));
+        }
+
+        function handleAppDeactivateFence() {
+            const fidInput = document.getElementById('app_fe0_param_fid');
+            const fid = fidInput.value.trim();
+            if (!fid) { alert('请输入要禁用的围栏ID (Please enter Fence ID to disable)'); fidInput.focus(); return; }
+            const command = { c: 'fe0', p: [fid] };
+            sendAppCommandViaBle(JSON.stringify(command));
+        }
+
+        function handleAppDeleteFence() {
+            const fidsInput = document.getElementById('app_fd_param_fids');
+            const fidsStr = fidsInput.value.trim();
+            if (!fidsStr) { alert('请输入要删除的围栏ID列表，以逗号分隔 (Please enter Fence IDs to delete, comma-separated)'); fidsInput.focus(); return; }
+            const fidsArray = fidsStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
+            if (fidsArray.length === 0) { alert('请输入有效的围栏ID (Please enter valid Fence IDs)'); fidsInput.focus(); return; }
+            const command = { c: 'fd', p: fidsArray };
+            sendAppCommandViaBle(JSON.stringify(command));
+        }
+
+        function handleAppSetFenceParams() {
+            const paddingInput = document.getElementById('app_sfp1_padding');
+            const marginInput = document.getElementById('app_sfp1_margin');
+            const padding = parseFloat(paddingInput.value);
+            const margin = parseFloat(marginInput.value);
+
+            if (isNaN(padding)) { alert('请输入有效的Padding值 (Please enter a valid Padding value)'); paddingInput.focus(); return; }
+            if (isNaN(margin)) { alert('请输入有效的Margin值 (Please enter a valid Margin value)'); marginInput.focus(); return; }
+
+            const command = { c: 'sfp1', p: [padding, margin] };
+            sendAppCommandViaBle(JSON.stringify(command));
+        }
+
+        function handleAppDebugEventGnss() {
+            const typeInput = document.getElementById('app_debug_event_type');
+            const latInput = document.getElementById('app_debug_event_lat');
+            const lngInput = document.getElementById('app_debug_event_lng');
+
+            const type = parseInt(typeInput.value);
+            const lat = parseFloat(latInput.value);
+            const lng = parseFloat(lngInput.value);
+
+            if (isNaN(type) || type < 1 || type > 6) { alert('请输入有效的Type值 (1-6) (Please enter a valid Type value (1-6))'); typeInput.focus(); return; }
+            if (isNaN(lat)) { alert('请输入有效的Latitude值 (Please enter a valid Latitude value)'); latInput.focus(); return; }
+            if (isNaN(lng)) { alert('请输入有效的Longitude值 (Please enter a valid Longitude value)'); lngInput.focus(); return; }
+
+            const command = { c: 'debug.event_gnss', p: { type: type, lat: lat, lng: lng } };
+            sendAppCommandViaBle(JSON.stringify(command));
+        }
+
+        // 父页面JS
+        function receiveAmapFenceData(data) {
+            const openEditBtn = document.getElementById('openEditorBtn');
+            console.log("从围栏编辑器接收到的数据:", data);
+            openEditBtn.disabled = false;
+            displayReceivedData(data);
+
+            closeFenceEditor(); // 关闭编辑器模态框
+        }
+
+        function formatCoordinates(pointsArray) {
+            if (!pointsArray || pointsArray.length === 0) return "无坐标点";
+            let formatted = [];
+            for (let i = 0; i < pointsArray.length; i += 2) {
+                if (pointsArray[i+1] !== undefined) {
+                    formatted.push(`[${pointsArray[i].toFixed(6)}, ${pointsArray[i+1].toFixed(6)}]`);
+                }
+            }
+            return formatted.join(', ');
+        }
+        function displayReceivedData(data) {
+            const dataListDiv = document.getElementById('dataList');
+            if (!data) { // 检查 data 是否存在
+                dataListDiv.innerHTML = '<p class="text-gray-500 italic">接收到的数据为空或无效。</p>';
+                return;
+            }
+            // 将接收到的数据对象转换为格式化的JSON字符串
+            const jsonString = JSON.stringify(data); // null, 2 用于美化输出（缩进2个空格）
+            try {
+                sendAppCommandViaBle(jsonString);
+            } catch (e) {
+                alert('添加围栏参数JSON无效 (Invalid JSON for Add Fence parameters): ' + e.message);
+                console.error('Invalid JSON for Add Fence:', e);
+                paramJsonTextarea.focus();
+            }
+            // 将JSON字符串包裹在<pre>标签中以保持格式，并应用Tailwind样式
+            dataListDiv.innerHTML = `<pre class="bg-white p-3 border border-gray-200 rounded-md text-sm shadow overflow-auto max-h-96">${jsonString}</pre>`;
+        }
+
+        // 父页面JS
+        function openFenceEditor() {
+            const iframe = document.getElementById('fenceEditorFrame');
+            iframe.style.display = 'block';
+            console.log("打开编辑器模态框");
+
+            if (iframe.contentWindow && typeof iframe.contentWindow.openEditorModal === 'function') {
+              iframe.contentWindow.openEditorModal();
+            }
+        }
+
+        function editorModalClosed() {
+            console.log("编辑器模态框已由iframe内部关闭。");
+             if (document.getElementById('fenceEditorFrame').style.display !== 'none') {
+                closeFenceEditor();
+            }
+        }
+
+        function closeFenceEditor() {
+            document.getElementById('fenceEditorFrame').style.display = 'none';
+        }
+
+        function crc8(current, previous = 0) {
+            const TABLE = [
+                0x00, 0x07, 0x0e, 0x09, 0x1c, 0x1b, 0x12, 0x15, 0x38, 0x3f, 0x36, 0x31, 0x24, 0x23, 0x2a, 0x2d,
+                0x70, 0x77, 0x7e, 0x79, 0x6c, 0x6b, 0x62, 0x65, 0x48, 0x4f, 0x46, 0x41, 0x54, 0x53, 0x5a, 0x5d,
+                0xe0, 0xe7, 0xee, 0xe9, 0xfc, 0xfb, 0xf2, 0xf5, 0xd8, 0xdf, 0xd6, 0xd1, 0xc4, 0xc3, 0xca, 0xcd,
+                0x90, 0x97, 0x9e, 0x99, 0x8c, 0x8b, 0x82, 0x85, 0xa8, 0xaf, 0xa6, 0xa1, 0xb4, 0xb3, 0xba, 0xbd,
+                0xc7, 0xc0, 0xc9, 0xce, 0xdb, 0xdc, 0xd5, 0xd2, 0xff, 0xf8, 0xf1, 0xf6, 0xe3, 0xe4, 0xed, 0xea,
+                0xb7, 0xb0, 0xb9, 0xbe, 0xab, 0xac, 0xa5, 0xa2, 0x8f, 0x88, 0x81, 0x86, 0x93, 0x94, 0x9d, 0x9a,
+                0x27, 0x20, 0x29, 0x2e, 0x3b, 0x3c, 0x35, 0x32, 0x1f, 0x18, 0x11, 0x16, 0x03, 0x04, 0x0d, 0x0a,
+                0x57, 0x50, 0x59, 0x5e, 0x4b, 0x4c, 0x45, 0x42, 0x6f, 0x68, 0x61, 0x66, 0x73, 0x74, 0x7d, 0x7a,
+                0x89, 0x8e, 0x87, 0x80, 0x95, 0x92, 0x9b, 0x9c, 0xb1, 0xb6, 0xbf, 0xb8, 0xad, 0xaa, 0xa3, 0xa4,
+                0xf9, 0xfe, 0xf7, 0xf0, 0xe5, 0xe2, 0xeb, 0xec, 0xc1, 0xc6, 0xcf, 0xc8, 0xdd, 0xda, 0xd3, 0xd4,
+                0x69, 0x6e, 0x67, 0x60, 0x75, 0x72, 0x7b, 0x7c, 0x51, 0x56, 0x5f, 0x58, 0x4d, 0x4a, 0x43, 0x44,
+                0x19, 0x1e, 0x17, 0x10, 0x05, 0x02, 0x0b, 0x0c, 0x21, 0x26, 0x2f, 0x28, 0x3d, 0x3a, 0x33, 0x34,
+                0x4e, 0x49, 0x40, 0x47, 0x52, 0x55, 0x5c, 0x5b, 0x76, 0x71, 0x78, 0x7f, 0x6a, 0x6d, 0x64, 0x63,
+                0x3e, 0x39, 0x30, 0x37, 0x22, 0x25, 0x2c, 0x2b, 0x06, 0x01, 0x08, 0x0f, 0x1a, 0x1d, 0x14, 0x13,
+                0xae, 0xa9, 0xa0, 0xa7, 0xb2, 0xb5, 0xbc, 0xbb, 0x96, 0x91, 0x98, 0x9f, 0x8a, 0x8d, 0x84, 0x83,
+                0xde, 0xd9, 0xd0, 0xd7, 0xc2, 0xc5, 0xcc, 0xcb, 0xe6, 0xe1, 0xe8, 0xef, 0xfa, 0xfd, 0xf4, 0xf3,
+            ];
+            let crc = ~~previous;
+            for (let index = 0; index < current.length; index++) {
+                crc = TABLE[(crc ^ current[index]) & 0xff] & 0xff;
+            }
+            return crc;
+        }
+    </script>
+    </body>
+</html>
