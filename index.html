@@ -102,15 +102,15 @@
                         <div class="mb-4">
                             <label for="customCmd" class="block font-medium text-gray-700 mb-1">自定义命令</label>
                             <div class="flex items-center gap-2">
-                                <input type="text" id="customCmd" placeholder="输入自定义命令并按回车" class="min-w-[200px] sm:min-w-[320px] flex-grow">
-                                <input type="checkbox" id="clearOnSent" checked class="form-checkbox h-5 w-5 text-blue-600 rounded">
+                                <input type="text" id="customCmd" placeholder="输入自定义命令并按回车" class="cmd min-w-[200px] sm:min-w-[320px] flex-grow" disabled>
+                                <input type="checkbox" id="clearOnSent" checked class="cmd form-checkbox h-5 w-5 text-blue-600 rounded" disabled>
                                 <label for="clearOnSent" class="text-sm text-gray-600">自动添加\r\n</label>
                             </div>
                         </div>
                         
                         <div class="mb-4">
                             <label for="appCmd" class="block font-medium text-gray-700 mb-1">发送app命令</label>
-                            <input type="text" id="appCmd" placeholder="输入app命令并按回车" class="min-w-[200px] sm:min-w-[320px] w-full">
+                            <input type="text" id="appCmd" placeholder="输入app命令并按回车" class="cmd min-w-[200px] sm:min-w-[320px] w-full" disabled>
                         </div>
                         
                         <div>
@@ -193,6 +193,58 @@
 
             </div>
         </details>
+
+        <details id="wifiCommandsSection" class="mb-6 bg-white shadow-md rounded-lg p-4">
+            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">Wi-Fi 信标工具</summary>
+            <div class="space-y-4 mt-4">
+                <div id="wifiMessage" class="text-sm text-gray-600"></div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    <button class="cmd cmd-button" disabled onclick="handleWifiStatus()">查询 Wi-Fi 状态</button>
+                    <button class="cmd cmd-button" disabled onclick="handleWifiEnable()">开启 Wi-Fi 信标</button>
+                    <button class="cmd cmd-button" disabled onclick="handleWifiDisable()">关闭 Wi-Fi 信标</button>
+                    <button class="cmd cmd-button" disabled onclick="handleWifiScan()">触发 Wi-Fi 扫描</button>
+                    <button class="cmd cmd-button" disabled onclick="handleWifiQueryTags()">查询信标列表</button>
+                </div>
+
+                <div class="p-3 border rounded-md space-y-2">
+                    <h4 class="font-medium text-gray-700">添加 Wi-Fi 信标</h4>
+                    <div class="flex flex-wrap gap-2">
+                        <input type="text" id="wifiAddSsid" class="cmd cmd-input flex-grow min-w-[180px]" placeholder="SSID" disabled>
+                        <input type="text" id="wifiAddMac" class="cmd cmd-input flex-grow min-w-[180px]" placeholder="MAC 地址 (例如: 12:34:56:78:9A:BC)" disabled>
+                        <button class="cmd cmd-button" disabled onclick="handleWifiAddTag()">添加</button>
+                    </div>
+                </div>
+
+                <div class="p-3 border rounded-md space-y-2">
+                    <h4 class="font-medium text-gray-700">删除 Wi-Fi 信标</h4>
+                    <div class="flex flex-wrap gap-2">
+                        <input type="text" id="wifiDeleteMac" class="cmd cmd-input flex-grow min-w-[180px]" placeholder="MAC 地址" disabled>
+                        <button class="cmd cmd-button" disabled onclick="handleWifiDeleteTag()">删除</button>
+                    </div>
+                </div>
+
+                <div class="p-3 border rounded-md bg-gray-50">
+                    <h4 class="font-medium text-gray-700 mb-2">当前 Wi-Fi 状态</h4>
+                    <div id="wifiStatusDisplay" class="text-sm text-gray-700"></div>
+                </div>
+
+                <div class="p-3 border rounded-md bg-gray-50">
+                    <h4 class="font-medium text-gray-700 mb-2">最近扫描结果</h4>
+                    <div id="wifiScanResults" class="text-sm text-gray-700"></div>
+                </div>
+
+                <div class="p-3 border rounded-md bg-gray-50">
+                    <h4 class="font-medium text-gray-700 mb-2">已保存的 Wi-Fi 信标</h4>
+                    <div id="wifiTagList" class="text-sm text-gray-700"></div>
+                </div>
+
+                <div>
+                    <label class="block font-medium text-gray-700 mb-1">Wi-Fi 命令日志:</label>
+                    <div id="wifiCmdRspLog" class="block max-h-[200px] h-[200px] overflow-y-auto bg-gray-100 p-2 border border-gray-300 rounded-md text-sm font-mono"></div>
+                </div>
+            </div>
+        </details>
     </div>
 <script type="text/javascript">
         // document.addEventListener('DOMContentLoaded', () => { if (prompt("请输入访问密码：") !== 'satellai') document.body.innerHTML = ''; });
@@ -238,12 +290,17 @@
 
             onDisconnected() {
                 console.log('[WARN]DISCONNECTED');
+                flushPendingAppResponse();
                 const status = document.getElementById('status');
                 status.innerText = '未连接'; status.style.color = 'red';
                 document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
+                this.device = null;
             }
 
             async sendCmd(svc, ch, data) {
+                if (!this.device || !this.device.gatt || !this.device.gatt.connected) {
+                    throw new Error('设备未连接，无法发送指令');
+                }
                 if (typeof data === 'string') data = new TextEncoder().encode(data);
                 const service = await this.device.gatt.getPrimaryService(svc);
                 const characteristic = await service.getCharacteristic(ch);
@@ -251,6 +308,9 @@
             }
 
             async startCmdNotifications(svc, ch, listener) {
+                if (!this.device || !this.device.gatt || !this.device.gatt.connected) {
+                    throw new Error('设备未连接，无法订阅通知');
+                }
                 const service = await this.device.gatt.getPrimaryService(svc);
                 const characteristic = await service.getCharacteristic(ch);
                 await characteristic.startNotifications();
@@ -258,6 +318,7 @@
             }
 
             async stopCmdNotifications(svc, ch, listener) {
+                if (!this.device || !this.device.gatt || !this.device.gatt.connected) return;
                 const service = await this.device.gatt.getPrimaryService(svc);
                 const characteristic = await service.getCharacteristic(ch);
                 await characteristic.stopNotifications();
@@ -266,6 +327,36 @@
         }
 
         const peripheral = new Peripheral();
+
+        const wifiConstants = {
+            stateMap: {
+                0: '未扫描到信标',
+                1: '已扫描到信标',
+                2: '信标功能未开启'
+            },
+            encryptionMap: {
+                0: 'OPEN',
+                1: 'WEP',
+                2: 'WPA_PSK',
+                3: 'WPA2_PSK',
+                4: 'WPA_WPA2_PSK',
+                5: 'WPA2_ENTERPRISE',
+                6: 'WPA3_PSK',
+                7: 'WPA2_WPA3_PSK',
+                8: 'WAPI_PSK',
+                9: 'OWE'
+            },
+            addResultMap: {
+                0: '添加成功',
+                1: '失败：信标已满',
+                2: '未知错误'
+            },
+            delResultMap: {
+                0: '删除成功',
+                1: '未找到该信标',
+                2: '未知错误'
+            }
+        };
 
         function appendLog(element, text, direction = '>') {
             if (!element || text === undefined || text === null) return;
@@ -291,12 +382,29 @@
 
         let resolveData = null;
         let resolveDfu = null;
-        let resolveApp = null;
+
+        const DEFAULT_APP_RESPONSE_TIMEOUT = 400;
+        const DEFAULT_APP_RESPONSE_MAX_WAIT = 5000;
+        let pendingAppResponse = null;
+
+        function isDeviceConnected() {
+            return peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected;
+        }
+
+        function flushPendingAppResponse() {
+            if (!pendingAppResponse) return;
+            const { resolve, buffer, inactivityTimer, overallTimer } = pendingAppResponse;
+            if (inactivityTimer) clearTimeout(inactivityTimer);
+            if (overallTimer) clearTimeout(overallTimer);
+            pendingAppResponse = null;
+            resolve(buffer);
+        }
 
         document.getElementById('scanAndConnect').addEventListener('click', async event => {
-            await peripheral.request();
-            await peripheral.connect();
-            await peripheral.startCmdNotifications(uuidSvcNus, uuidCharNotify, event => {
+            try {
+                await peripheral.request();
+                await peripheral.connect();
+                await peripheral.startCmdNotifications(uuidSvcNus, uuidCharNotify, event => {
                 const text = new TextDecoder().decode(event.target.value);
                 const lbl = document.getElementById('customCmdRsp');
                 if (lbl) {
@@ -308,11 +416,14 @@
                     resolveData = null;
                 }
             });
-            await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharApp, event => {
+                await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharApp, event => {
                 const text = new TextDecoder().decode(event.target.value);
-                if (resolveApp) {
-                    resolveApp(text);
-                    resolveApp = null;
+                if (pendingAppResponse) {
+                    pendingAppResponse.buffer += text;
+                    if (pendingAppResponse.inactivityTimer) clearTimeout(pendingAppResponse.inactivityTimer);
+                    pendingAppResponse.inactivityTimer = setTimeout(() => {
+                        flushPendingAppResponse();
+                    }, pendingAppResponse.inactivityMs);
                 } else {
                     const appLbl = document.getElementById('appCmdRspLog');
                     if (appLbl) {
@@ -321,13 +432,25 @@
                     }
                 }
             });
-            await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharDfu, event => {
+                await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharDfu, event => {
                 if (resolveDfu) {
                     resolveDfu(event.target.value);
                     resolveDfu = null;
                 }
                 else console.warn(event.target.value);
             });
+            } catch (error) {
+                console.error('[ERROR] 设备连接或订阅失败:', error);
+                flushPendingAppResponse();
+                if (peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected) {
+                    try { peripheral.device.gatt.disconnect(); } catch (e) { console.warn(e); }
+                }
+                peripheral.device = null;
+                const status = document.getElementById('status');
+                status.innerText = '连接失败';
+                status.style.color = 'red';
+                document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
+            }
         });
 
         function timestamp() {
@@ -341,15 +464,31 @@
         document.getElementById('customCmd').addEventListener('keyup', async event => {
             if (event.key === 'Enter') {
                 let cmd = event.target.value.trim();
+                if (!cmd) return;
                 const addCrLf = document.getElementById('clearOnSent').checked;
                 if (addCrLf) cmd += '\r\n';
                 const lbl = document.getElementById('customCmdRsp');
+                if (!isDeviceConnected()) {
+                    if (lbl) {
+                        appendLog(lbl, 'ERROR(NUS): 设备未连接，无法发送命令\n', '>');
+                        lbl.scrollTop = lbl.scrollHeight;
+                    }
+                    return;
+                }
                 if (lbl) {
                     appendLog(lbl, `SENT(NUS): ${cmd}\n`, '<');
                     lbl.scrollTop = lbl.scrollHeight;
                 }
                 setTimeout(async () => {
-                    await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, cmd);
+                    try {
+                        await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, cmd);
+                    } catch (error) {
+                        console.error('[ERROR] 自定义命令发送失败:', error);
+                        if (lbl) {
+                            appendLog(lbl, `ERROR(NUS): ${error.message || error}\n`, '>');
+                            lbl.scrollTop = lbl.scrollHeight;
+                        }
+                    }
                 }, 0);
                 if (addCrLf) event.target.value = '';
             }
@@ -358,13 +497,29 @@
         document.getElementById('appCmd').addEventListener('keyup', async event => {
             if (event.key === 'Enter') {
                 let cmd = event.target.value.trim();
+                if (!cmd) return;
                 const lbl = document.getElementById('appCmdRspLog');
+                if (!isDeviceConnected()) {
+                    if (lbl) {
+                        appendLog(lbl, 'ERROR(APP): 设备未连接，无法发送命令\n', '>');
+                        lbl.scrollTop = lbl.scrollHeight;
+                    }
+                    return;
+                }
                 if (lbl) {
                     appendLog(lbl, `SENT(APP): ${cmd}\n`, '<');
                     lbl.scrollTop = lbl.scrollHeight;
                 }
                 setTimeout(async () => {
-                    await peripheral.sendCmd(uuidSvcSatellai, uuidCharApp, cmd);
+                    try {
+                        await peripheral.sendCmd(uuidSvcSatellai, uuidCharApp, cmd);
+                    } catch (error) {
+                        console.error('[ERROR] APP命令发送失败:', error);
+                        if (lbl) {
+                            appendLog(lbl, `ERROR(APP): ${error.message || error}\n`, '>');
+                            lbl.scrollTop = lbl.scrollHeight;
+                        }
+                    }
                 }, 0);
                 event.target.value = '';
             }
@@ -824,13 +979,17 @@
         }
 
         // Add event listeners to radio buttons to potentially clear input or provide feedback on mode change
-        document.getElementById('modeAscii').addEventListener('change', handleModeChange);
-        document.getElementById('modeHex').addEventListener('change', handleModeChange);
+        const modeAsciiRadio = document.getElementById('modeAscii');
+        const modeHexRadio = document.getElementById('modeHex');
+        if (modeAsciiRadio) modeAsciiRadio.addEventListener('change', handleModeChange);
+        if (modeHexRadio) modeHexRadio.addEventListener('change', handleModeChange);
 
         function handleModeChange() {
             const ntnSendInput = document.getElementById('NTNsend');
             const responseLabel = document.querySelector('label.rsp[for="writeNTNsendData"]');
-            const selectedMode = document.querySelector('input[name="ntnMode"]:checked').value;
+            const checked = document.querySelector('input[name="ntnMode"]:checked');
+            if (!checked) return;
+            const selectedMode = checked.value;
 
             // Optional: Clear input or provide guidance when mode changes
             // ntnSendInput.value = ''; // Uncomment to clear input on mode change
@@ -839,7 +998,9 @@
             } else {
                 ntnSendInput.placeholder = "输入16进制内容 (e.g., B4C7)";
             }
-            responseLabel.textContent = `模式已切换到: ${selectedMode === 'ascii' ? 'ASCII' : '16进制'}`;
+            if (responseLabel) {
+                responseLabel.textContent = `模式已切换到: ${selectedMode === 'ascii' ? 'ASCII' : '16进制'}`;
+            }
         }
 
         // Initialize placeholder based on default checked mode when controls are enabled
@@ -847,9 +1008,9 @@
         function initializeInputPlaceholder() {
             const ntnSendInput = document.getElementById('NTNsend');
             if (!ntnSendInput.disabled) { // Only if it's enabled
-                if (document.getElementById('modeAscii').checked) {
+                if (modeAsciiRadio && modeAsciiRadio.checked) {
                     ntnSendInput.placeholder = "输入ASCII内容 (e.g., Hello)";
-                } else {
+                } else if (modeHexRadio) {
                     ntnSendInput.placeholder = "输入16进制内容 (e.g., B4C7)";
                 }
             }
@@ -993,45 +1154,375 @@
 
 
         // New helper function to send app commands and display response
-        async function sendAppCommandViaBle(jsonString) {
+        async function sendAppCommandViaBle(jsonString, options = {}) {
+            const {
+                containerSelector = '#appAdvancedCommandsSection',
+                logElementId = 'appCmdRspLog',
+                labelPrefix = 'APP',
+                responseTimeout = DEFAULT_APP_RESPONSE_TIMEOUT,
+                maxWait = DEFAULT_APP_RESPONSE_MAX_WAIT
+            } = options;
+
             if (!peripheral.device || !peripheral.device.gatt.connected) {
                 const statusLabel = document.getElementById('status');
                 statusLabel.innerText = "设备未连接 (Device not connected)";
                 statusLabel.style.color = 'red';
-                // console.warn("Device not connected. Cannot send app command.");
-                // alert("设备未连接 (Device not connected)"); // Optional: alert user
-                return;
+                const logElement = document.getElementById(logElementId);
+                if (logElement) {
+                    appendLog(logElement, `ERROR(${labelPrefix}): 设备未连接\n`, '>');
+                    logElement.scrollTop = logElement.scrollHeight;
+                }
+                return null;
             }
-            const lbl = document.getElementById('appCmdRspLog');
-            appendLog(lbl, `SENT(APP): ${jsonString}\n`, '<');
-            lbl.scrollTop = lbl.scrollHeight;
 
-            // Disable buttons and inputs in the advanced commands section temporarily
-            document.querySelectorAll('#appAdvancedCommandsSection .cmd-button, #appAdvancedCommandsSection .cmd-input, #appAdvancedCommandsSection .cmd-textarea').forEach(el => el.disabled = true);
+            const logElement = document.getElementById(logElementId);
+            if (logElement) {
+                appendLog(logElement, `SENT(${labelPrefix}): ${jsonString}\n`, '<');
+                logElement.scrollTop = logElement.scrollHeight;
+            }
+
+            const controls = containerSelector
+                ? Array.from(document.querySelectorAll(`${containerSelector} .cmd-button, ${containerSelector} .cmd-input, ${containerSelector} .cmd-textarea`))
+                : [];
+            controls.forEach(el => el.disabled = true);
 
             try {
-                // Ensure peripheral and gatt are still valid
                 if (peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected) {
+                    const responsePromise = new Promise(resolve => {
+                        if (pendingAppResponse) flushPendingAppResponse();
+                        const inactivityMs = Math.max(50, responseTimeout);
+                        const overallMs = Math.max(inactivityMs, maxWait);
+                        pendingAppResponse = {
+                            resolve,
+                            buffer: '',
+                            inactivityTimer: null,
+                            inactivityMs,
+                            overallTimer: setTimeout(() => {
+                                flushPendingAppResponse();
+                            }, overallMs)
+                        };
+                    });
                     await peripheral.sendCmd(uuidSvcSatellai, uuidCharApp, jsonString);
-                    const rsp = await new Promise(resolve => (resolveApp = resolve)); // resolveApp should be set by your notification handler
-                    appendLog(lbl, `RESP(APP): ${rsp}\n`, '>');
-                    lbl.scrollTop = lbl.scrollHeight;
-                } else {
-                    throw new Error("Device disconnected before command could be fully processed.");
-                }
-            } catch (error) {
-                appendLog(lbl, `ERROR(APP): ${error}\n`, '>');
-                lbl.scrollTop = lbl.scrollHeight;
-                console.error("Error sending app command or receiving response:", error);
-            } finally {
-                // Re-enable buttons and inputs in the advanced commands section, respecting initial disabled state if any
-                document.querySelectorAll('#appAdvancedCommandsSection .cmd-button, #appAdvancedCommandsSection .cmd-input, #appAdvancedCommandsSection .cmd-textarea').forEach(el => {
-                    // Only re-enable if the device is still connected
-                    if (peripheral.device && peripheral.device.gatt.connected) {
-                        el.disabled = false;
+                    const rsp = await responsePromise;
+                    if (logElement) {
+                        appendLog(logElement, `RESP(${labelPrefix}): ${rsp}\n`, '>');
+                        logElement.scrollTop = logElement.scrollHeight;
                     }
-                });
+                    return rsp;
+                }
+                throw new Error("Device disconnected before command could be fully processed.");
+            } catch (error) {
+                flushPendingAppResponse();
+                if (logElement) {
+                    appendLog(logElement, `ERROR(${labelPrefix}): ${error}\n`, '>');
+                    logElement.scrollTop = logElement.scrollHeight;
+                }
+                console.error("Error sending app command or receiving response:", error);
+                return null;
+            } finally {
+                const shouldEnable = peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected;
+                if (shouldEnable) controls.forEach(el => el.disabled = false);
             }
+        }
+
+        function getWifiCommandOptions() {
+            if (!globalThis.__wifiCommandOptions) {
+                globalThis.__wifiCommandOptions = {
+                    containerSelector: '#wifiCommandsSection',
+                    logElementId: 'wifiCmdRspLog',
+                    labelPrefix: 'WIFI',
+                    responseTimeout: 800,
+                    maxWait: 10000
+                };
+            }
+            return globalThis.__wifiCommandOptions;
+        }
+
+        function safeJsonParse(str) {
+            if (typeof str !== 'string') return null;
+            try {
+                return JSON.parse(str.trim());
+            } catch (error) {
+                console.warn('无法解析 JSON 响应:', str, error);
+                return null;
+            }
+        }
+
+        function setWifiMessage(message, color = '#4b5563') {
+            const el = document.getElementById('wifiMessage');
+            if (!el) return;
+            el.textContent = message || '';
+            el.style.color = color;
+        }
+
+        function createTableCell(text, header = false) {
+            const cell = document.createElement(header ? 'th' : 'td');
+            cell.textContent = text ?? '';
+            cell.className = header ? 'px-3 py-2 text-left text-gray-600 font-semibold' : 'px-3 py-2 text-gray-800 break-all';
+            return cell;
+        }
+
+        function renderWifiStatus(payload) {
+            const container = document.getElementById('wifiStatusDisplay');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const data = payload && typeof payload === 'object' ? payload.r : null;
+            if (!data || typeof data !== 'object') {
+                container.textContent = '尚未获取到 Wi-Fi 状态数据。';
+                return;
+            }
+
+            const table = document.createElement('table');
+            table.className = 'w-full text-sm border-collapse';
+            const tbody = document.createElement('tbody');
+
+            const rows = [
+                ['状态', data.t !== undefined ? `${data.t} (${wifiConstants.stateMap[data.t] || '未知状态'})` : '未知'],
+                ['Wi-Fi 名称 (SSID)', data.s || '-'],
+                ['MAC 地址', data.m || '-'],
+                ['信号强度 (RSSI)', data.r !== undefined ? `${data.r} dBm` : '-']
+            ];
+
+            rows.forEach(([label, value]) => {
+                const tr = document.createElement('tr');
+                const th = document.createElement('th');
+                th.textContent = label;
+                th.className = 'px-3 py-2 text-left text-gray-600 font-semibold';
+                const td = document.createElement('td');
+                td.textContent = value;
+                td.className = 'px-3 py-2 text-gray-800 break-all';
+                tr.appendChild(th);
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+            });
+
+            table.appendChild(tbody);
+            container.appendChild(table);
+        }
+
+        function renderWifiScanResults(payload) {
+            const container = document.getElementById('wifiScanResults');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const list = payload && Array.isArray(payload.r) ? payload.r : [];
+            if (!list.length) {
+                container.textContent = '暂未扫描到可用 Wi-Fi 信标。';
+                return;
+            }
+
+            const table = document.createElement('table');
+            table.className = 'w-full text-sm border border-gray-200';
+
+            const thead = document.createElement('thead');
+            thead.className = 'bg-gray-100';
+            const headerRow = document.createElement('tr');
+            ['SSID', 'MAC 地址', '信号强度 (dBm)', '加密方式'].forEach(text => headerRow.appendChild(createTableCell(text, true)));
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            list.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.className = 'odd:bg-white even:bg-gray-50';
+                tr.appendChild(createTableCell(item.s || '-'));
+                tr.appendChild(createTableCell(item.m || '-'));
+                tr.appendChild(createTableCell(item.r !== undefined ? `${item.r}` : '-'));
+                const encryptionLabel = item.e !== undefined ? `${item.e} (${wifiConstants.encryptionMap[item.e] || '未知'})` : '-';
+                tr.appendChild(createTableCell(encryptionLabel));
+                tbody.appendChild(tr);
+            });
+
+            table.appendChild(tbody);
+            container.appendChild(table);
+        }
+
+        function renderWifiTagList(payload) {
+            const container = document.getElementById('wifiTagList');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const list = payload && Array.isArray(payload.r) ? payload.r : [];
+            if (!list.length) {
+                container.textContent = '当前未保存任何 Wi-Fi 信标。';
+                return;
+            }
+
+            const table = document.createElement('table');
+            table.className = 'w-full text-sm border border-gray-200';
+
+            const thead = document.createElement('thead');
+            thead.className = 'bg-gray-100';
+            const headerRow = document.createElement('tr');
+            ['SSID', 'MAC 地址'].forEach(text => headerRow.appendChild(createTableCell(text, true)));
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            list.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.className = 'odd:bg-white even:bg-gray-50';
+                tr.appendChild(createTableCell(item.s || '-'));
+                tr.appendChild(createTableCell(item.m || '-'));
+                tbody.appendChild(tr);
+            });
+
+            table.appendChild(tbody);
+            container.appendChild(table);
+        }
+
+        function validateMacAddress(mac) {
+            const macPattern = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
+            return macPattern.test(mac.trim());
+        }
+
+        async function handleWifiStatus() {
+            setWifiMessage('正在查询 Wi-Fi 状态...', '#2563eb');
+            const rsp = await sendAppCommandViaBle(JSON.stringify({ c: 'wifi.status' }), getWifiCommandOptions());
+            if (!rsp) {
+                setWifiMessage('查询 Wi-Fi 状态失败。', '#dc2626');
+                return;
+            }
+            const payload = safeJsonParse(rsp);
+            if (!payload) {
+                setWifiMessage('无法解析 Wi-Fi 状态响应。', '#dc2626');
+                return;
+            }
+            renderWifiStatus(payload);
+            setWifiMessage('Wi-Fi 状态已更新。', '#16a34a');
+        }
+
+        async function handleWifiEnable() {
+            setWifiMessage('正在开启 Wi-Fi 信标功能...', '#2563eb');
+            const rsp = await sendAppCommandViaBle(JSON.stringify({ c: 'wifi.enable' }), getWifiCommandOptions());
+            if (!rsp) {
+                setWifiMessage('开启 Wi-Fi 信标功能失败。', '#dc2626');
+                return;
+            }
+            const payload = safeJsonParse(rsp);
+            const result = payload && typeof payload === 'object' ? payload.r : null;
+            if (result === 0) setWifiMessage('Wi-Fi 信标功能已开启。', '#16a34a');
+            else setWifiMessage(`开启失败：${result !== null ? `代码 ${result}` : '未知原因'}`, '#dc2626');
+        }
+
+        async function handleWifiDisable() {
+            setWifiMessage('正在关闭 Wi-Fi 信标功能...', '#2563eb');
+            const rsp = await sendAppCommandViaBle(JSON.stringify({ c: 'wifi.disable' }), getWifiCommandOptions());
+            if (!rsp) {
+                setWifiMessage('关闭 Wi-Fi 信标功能失败。', '#dc2626');
+                return;
+            }
+            const payload = safeJsonParse(rsp);
+            const result = payload && typeof payload === 'object' ? payload.r : null;
+            if (result === 0) setWifiMessage('Wi-Fi 信标功能已关闭。', '#16a34a');
+            else setWifiMessage(`关闭失败：${result !== null ? `代码 ${result}` : '未知原因'}`, '#dc2626');
+        }
+
+        async function handleWifiScan() {
+            setWifiMessage('正在扫描附近的 Wi-Fi 信标...', '#2563eb');
+            const rsp = await sendAppCommandViaBle(JSON.stringify({ c: 'wifi.scan' }), getWifiCommandOptions());
+            if (!rsp) {
+                setWifiMessage('触发 Wi-Fi 扫描失败。', '#dc2626');
+                return;
+            }
+            const payload = safeJsonParse(rsp);
+            if (!payload) {
+                setWifiMessage('无法解析 Wi-Fi 扫描结果。', '#dc2626');
+                return;
+            }
+            renderWifiScanResults(payload);
+            setWifiMessage('已更新 Wi-Fi 扫描结果。', '#16a34a');
+        }
+
+        async function handleWifiAddTag() {
+            const ssidInput = document.getElementById('wifiAddSsid');
+            const macInput = document.getElementById('wifiAddMac');
+            const ssid = ssidInput ? ssidInput.value.trim() : '';
+            const mac = macInput ? macInput.value.trim() : '';
+
+            if (!ssid) {
+                setWifiMessage('请输入要添加的 SSID。', '#dc2626');
+                ssidInput && ssidInput.focus();
+                return;
+            }
+            if (!mac) {
+                setWifiMessage('请输入要添加的 MAC 地址。', '#dc2626');
+                macInput && macInput.focus();
+                return;
+            }
+            if (!validateMacAddress(mac)) {
+                setWifiMessage('MAC 地址格式不正确，请使用冒号分隔的 6 组十六进制数字。', '#dc2626');
+                macInput && macInput.focus();
+                return;
+            }
+
+            setWifiMessage('正在添加 Wi-Fi 信标...', '#2563eb');
+            const rsp = await sendAppCommandViaBle(JSON.stringify({ c: 'wifi.addtag', p: { s: ssid, m: mac } }), getWifiCommandOptions());
+            if (!rsp) {
+                setWifiMessage('添加 Wi-Fi 信标失败。', '#dc2626');
+                return;
+            }
+            const payload = safeJsonParse(rsp);
+            const result = payload && typeof payload === 'object' ? payload.r : null;
+            const message = wifiConstants.addResultMap[result] || `未知返回码：${result}`;
+            if (result === 0) {
+                setWifiMessage(message, '#16a34a');
+                if (ssidInput) ssidInput.value = '';
+                if (macInput) macInput.value = '';
+                await handleWifiQueryTags({ silent: true });
+            } else {
+                setWifiMessage(message, '#dc2626');
+            }
+        }
+
+        async function handleWifiDeleteTag() {
+            const macInput = document.getElementById('wifiDeleteMac');
+            const mac = macInput ? macInput.value.trim() : '';
+            if (!mac) {
+                setWifiMessage('请输入要删除的 MAC 地址。', '#dc2626');
+                macInput && macInput.focus();
+                return;
+            }
+            if (!validateMacAddress(mac)) {
+                setWifiMessage('MAC 地址格式不正确，请使用冒号分隔的 6 组十六进制数字。', '#dc2626');
+                macInput && macInput.focus();
+                return;
+            }
+
+            setWifiMessage('正在删除 Wi-Fi 信标...', '#2563eb');
+            const rsp = await sendAppCommandViaBle(JSON.stringify({ c: 'wifi.deltag', p: { m: mac } }), getWifiCommandOptions());
+            if (!rsp) {
+                setWifiMessage('删除 Wi-Fi 信标失败。', '#dc2626');
+                return;
+            }
+            const payload = safeJsonParse(rsp);
+            const result = payload && typeof payload === 'object' ? payload.r : null;
+            const message = wifiConstants.delResultMap[result] || `未知返回码：${result}`;
+            if (result === 0) {
+                setWifiMessage(message, '#16a34a');
+                if (macInput) macInput.value = '';
+                await handleWifiQueryTags({ silent: true });
+            } else {
+                setWifiMessage(message, '#dc2626');
+            }
+        }
+
+        async function handleWifiQueryTags(options = {}) {
+            const { silent = false } = options;
+            if (!silent) setWifiMessage('正在查询已保存的 Wi-Fi 信标...', '#2563eb');
+            const rsp = await sendAppCommandViaBle(JSON.stringify({ c: 'wifi.querytag' }), getWifiCommandOptions());
+            if (!rsp) {
+                if (!silent) setWifiMessage('查询 Wi-Fi 信标列表失败。', '#dc2626');
+                return;
+            }
+            const payload = safeJsonParse(rsp);
+            if (!payload) {
+                if (!silent) setWifiMessage('无法解析 Wi-Fi 信标列表响应。', '#dc2626');
+                return;
+            }
+            renderWifiTagList(payload);
+            if (!silent) setWifiMessage('Wi-Fi 信标列表已更新。', '#16a34a');
         }
 
         // --- Specific command handlers ---
