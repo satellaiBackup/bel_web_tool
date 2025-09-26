@@ -1622,15 +1622,26 @@
             dataListDiv.innerHTML = `<pre class="bg-white p-3 border border-gray-200 rounded-md text-sm shadow overflow-auto max-h-96">${jsonString}</pre>`;
         }
 
+        function postMessageToFenceEditor(type, payload = {}) {
+            const iframe = document.getElementById('fenceEditorFrame');
+            if (!iframe) return;
+            const message = { source: 'index-parent', type, payload };
+            try {
+                if (iframe.contentWindow) {
+                    iframe.contentWindow.postMessage(message, '*');
+                }
+            } catch (error) {
+                console.warn('无法向围栏编辑器发送消息:', error);
+            }
+        }
+
         // 父页面JS
         function openFenceEditor() {
             const iframe = document.getElementById('fenceEditorFrame');
+            if (!iframe) return;
             iframe.style.display = 'block';
             console.log("打开编辑器模态框");
-
-            if (iframe.contentWindow && typeof iframe.contentWindow.openEditorModal === 'function') {
-              iframe.contentWindow.openEditorModal();
-            }
+            postMessageToFenceEditor('open-editor');
         }
 
         function editorModalClosed() {
@@ -1641,8 +1652,28 @@
         }
 
         function closeFenceEditor() {
-            document.getElementById('fenceEditorFrame').style.display = 'none';
+            const iframe = document.getElementById('fenceEditorFrame');
+            if (!iframe) return;
+            const wasVisible = iframe.style.display !== 'none';
+            iframe.style.display = 'none';
+            if (wasVisible) {
+                postMessageToFenceEditor('close-editor');
+            }
         }
+
+        window.addEventListener('message', event => {
+            const data = event.data;
+            if (!data || data.source !== 'gps-editor') return;
+            if (data.type === 'editorModalClosed') {
+                editorModalClosed();
+            } else if (data.type === 'fence-data') {
+                receiveAmapFenceData(data.payload);
+            } else if (data.type === 'log') {
+                console.log('[GPS EDITOR]', data.payload);
+            } else if (data.type === 'editor-ready') {
+                console.log('[GPS EDITOR] ready state:', data.payload);
+            }
+        });
 
         function crc8(current, previous = 0) {
             const TABLE = [

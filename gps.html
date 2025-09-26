@@ -199,20 +199,76 @@
 </div>
 
 <script type="text/javascript">
-    var map = new AMap.Map("container", {
-        center: [113.952597,22.539266],
-        zoom: 16,
-        resizeEnable: true 
-    });
+    function safeCallParent(fnName, payload) {
+        try {
+            if (window.parent && window.parent !== window) {
+                const fn = window.parent[fnName];
+                if (typeof fn === 'function') {
+                    fn(payload);
+                    return true;
+                }
+            }
+        } catch (error) {
+            console.warn(`无法直接调用父页面函数 ${fnName}:`, error);
+        }
+        return false;
+    }
 
-    var mouseTool = new AMap.MouseTool(map);
-    var drawnOverlays = []; 
-    var currentDrawnShapeData = null; 
-    var finalOutput = null; 
+    function notifyParent(type, payload = {}) {
+        try {
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({ source: 'gps-editor', type, payload }, '*');
+            }
+        } catch (error) {
+            console.warn('无法向父页面发送消息:', error);
+        }
+    }
+
+    var map = null;
+    var mouseTool = null;
+    var drawnOverlays = [];
+    var currentDrawnShapeData = null;
+    var finalOutput = null;
+    var mapReady = false;
 
     var coordinatesOutput = document.getElementById('coordinatesOutput');
     var previewTableContainer = document.getElementById('previewTableContainer');
     var fenceEditorModal = document.getElementById('fenceEditorModal');
+    var mapContainer = document.getElementById('container');
+
+    if (typeof AMap !== 'undefined') {
+        map = new AMap.Map("container", {
+            center: [113.952597,22.539266],
+            zoom: 16,
+            resizeEnable: true 
+        });
+        mouseTool = new AMap.MouseTool(map);
+        mapReady = true;
+    } else {
+        mapReady = false;
+        console.error('AMap SDK 未能加载。请通过本地服务器 (http://localhost) 访问页面。');
+        if (mapContainer) {
+            mapContainer.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#b91c1c;font-weight:600;">地图加载失败，请通过本地服务器访问页面 (例如使用 live-server)。</div>';
+        }
+        notifyParent('log', 'AMap SDK 未加载，地图功能将不可用。');
+    }
+
+    function ensureMapReady() {
+        if (mapReady && map && mouseTool) return true;
+        console.warn('地图尚未初始化，无法执行该操作。');
+        alert('地图尚未初始化，无法执行该操作。请确认通过本地服务器访问页面。');
+        return false;
+    }
+
+    window.addEventListener('message', function(event) {
+        const data = event.data;
+        if (!data || data.source !== 'index-parent') return;
+        if (data.type === 'open-editor') {
+            openEditorModal();
+        } else if (data.type === 'close-editor') {
+            closeEditorModal();
+        }
+    });
 
 
     // --- 坐标转换常量和函数 (GCJ-02 to WGS-84) ---
@@ -283,14 +339,16 @@
     function openEditorModal() { // 由父页面调用来显示模态框
         if (fenceEditorModal) fenceEditorModal.style.display = 'flex';
         // 可能需要重新调整地图大小，如果它在隐藏时初始化
-        if (map) map.resize(); 
+        if (mapReady && map && typeof map.resize === 'function') map.resize();
     }
 
     function closeEditorModal() { // 用于关闭按钮和提交后
-        if (fenceEditorModal) fenceEditorModal.style.display = 'none';
-        // 通知父页面模态框已关闭（如果父页面需要知道）
-        if (window.parent && typeof window.parent.editorModalClosed === 'function') {
-            window.parent.editorModalClosed();
+        if (!fenceEditorModal) return;
+        const wasVisible = fenceEditorModal.style.display !== 'none';
+        fenceEditorModal.style.display = 'none';
+        if (!wasVisible) return;
+        if (!safeCallParent('editorModalClosed')) {
+            notifyParent('editorModalClosed');
         }
     }
 
@@ -300,6 +358,7 @@
     }
 
     function drawPolygon () {
+        if (!ensureMapReady()) return;
       mouseTool.polygon({
         strokeColor: "#FF33FF", strokeOpacity: 0.8, strokeWeight: 6,
         fillColor: '#1791fc', fillOpacity: 0.3, strokeStyle: "solid",
@@ -310,6 +369,7 @@
     }
 
     function drawRectangle () {
+        if (!ensureMapReady()) return;
       mouseTool.rectangle({
         strokeColor:'red', strokeOpacity:0.8, strokeWeight: 6,
         fillColor:'blue', fillOpacity:0.3, strokeStyle: 'solid',
@@ -320,6 +380,7 @@
     }
 
     function drawCircle () {
+        if (!ensureMapReady()) return;
       mouseTool.circle({
         strokeColor: "#008000", strokeOpacity: 1, strokeWeight: 6,
         fillColor: '#5cb85c', fillOpacity: 0.3, strokeStyle: 'solid',
@@ -361,7 +422,8 @@
         previewTableContainer.innerHTML = tableHTML;
     }
 
-    mouseTool.on('draw', function(event) {
+    if (mouseTool) {
+        mouseTool.on('draw', function(event) {
       var drawnObject = event.obj;
       drawnOverlays.push(drawnObject); 
       var className = drawnObject.CLASS_NAME; 
@@ -400,6 +462,7 @@
         coordinatesOutput.value = ""; 
         updataJsonData()
     });
+    }
 
     function updataJsonData() {
         if (!currentDrawnShapeData) {
@@ -458,17 +521,11 @@ function handleSubmitData() {
         coordinatesOutput.value = JSON.stringify(finalOutput); 
         console.log("格式化提交的数据 (WGS-84):", finalOutput);
 
-        if (window.parent && typeof window.parent.receiveAmapFenceData === 'function') {
-            try {
-                window.parent.receiveAmapFenceData(finalOutput);
-                console.log("数据已成功发送到父页面。");
-            } catch (e) {
-                console.error("发送数据到父页面时发生错误:", e);
-                alert("发送数据到父页面失败，详情请查看控制台。");
-            }
+        if (safeCallParent('receiveAmapFenceData', finalOutput)) {
+            console.log("数据已通过直接调用发送到父页面。");
         } else {
-            console.warn("父页面未定义 receiveAmapFenceData 函数，数据仅在当前页显示。");
-            alert("父页面未定义接收函数，数据仅在当前页显示。");
+            notifyParent('fence-data', finalOutput);
+            console.log("已通过 postMessage 将数据发送给父页面。");
         }
     }
 
@@ -483,6 +540,7 @@ function handleSubmitData() {
     //   resetEditor(); // 或根据父页面的指令决定是否重置
     // };
 
+    notifyParent('editor-ready', { mapReady: mapReady });
 </script>
 </body>
 </html>
