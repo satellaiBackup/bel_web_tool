@@ -267,6 +267,28 @@
 
         const peripheral = new Peripheral();
 
+        function appendLog(element, text, direction = '>') {
+            if (!element || text === undefined || text === null) return;
+            const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            const segments = normalized.split('\n');
+            segments.forEach((segment, index) => {
+                const isLast = index === segments.length - 1;
+                const endsWithLineBreak = !isLast || normalized.endsWith('\n');
+                const hasContent = segment.length > 0;
+                if (hasContent) {
+                    if (!element.innerText || element.innerText.endsWith('\n')) {
+                        element.innerText += `${timestamp()}${direction} `;
+                    }
+                    element.innerText += segment;
+                }
+                if (endsWithLineBreak) {
+                    if (!element.innerText.endsWith('\n')) {
+                        element.innerText += '\n';
+                    }
+                }
+            });
+        }
+
         let resolveData = null;
         let resolveDfu = null;
         let resolveApp = null;
@@ -275,18 +297,29 @@
             await peripheral.request();
             await peripheral.connect();
             await peripheral.startCmdNotifications(uuidSvcNus, uuidCharNotify, event => {
+                const text = new TextDecoder().decode(event.target.value);
+                const lbl = document.getElementById('customCmdRsp');
+                if (lbl) {
+                    appendLog(lbl, text, '>');
+                    lbl.scrollTop = lbl.scrollHeight;
+                }
                 if (resolveData) {
-                    resolveData(new TextDecoder().decode(event.target.value));
+                    resolveData(text);
                     resolveData = null;
                 }
-                else console.warn(event.target.value);
             });
             await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharApp, event => {
+                const text = new TextDecoder().decode(event.target.value);
                 if (resolveApp) {
-                    resolveApp(new TextDecoder().decode(event.target.value));
+                    resolveApp(text);
                     resolveApp = null;
+                } else {
+                    const appLbl = document.getElementById('appCmdRspLog');
+                    if (appLbl) {
+                        appendLog(appLbl, text, '>');
+                        appLbl.scrollTop = appLbl.scrollHeight;
+                    }
                 }
-                else console.warn(event.target.value);
             });
             await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharDfu, event => {
                 if (resolveDfu) {
@@ -299,43 +332,41 @@
 
         function timestamp() {
             const now = new Date();
-            return `${now.getHours().toFixed(2)}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}.${String(now.getMilliseconds()).padStart(2,'0')}`; }
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            const millis = String(now.getMilliseconds()).padStart(3, '0');
+            return `${hours}:${minutes}:${seconds}.${millis}`; }
 
         document.getElementById('customCmd').addEventListener('keyup', async event => {
             if (event.key === 'Enter') {
                 let cmd = event.target.value.trim();
-                if (document.getElementById('clearOnSent').checked) cmd += '\r\n';
+                const addCrLf = document.getElementById('clearOnSent').checked;
+                if (addCrLf) cmd += '\r\n';
                 const lbl = document.getElementById('customCmdRsp');
-                const now = new Date();
+                if (lbl) {
+                    appendLog(lbl, `SENT(NUS): ${cmd}\n`, '<');
+                    lbl.scrollTop = lbl.scrollHeight;
+                }
                 setTimeout(async () => {
                     await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, cmd);
                 }, 0);
-                while (true) {
-                    rsp = await new Promise(resolve => (resolveData = resolve));
-                    console.log('rsp: ' + rsp);
-                    lbl.innerText += `${timestamp()}> ${rsp}`;
-                    lbl.scrollTop = lbl.scrollHeight;
-                    if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
-                }
+                if (addCrLf) event.target.value = '';
             }
         });
 
         document.getElementById('appCmd').addEventListener('keyup', async event => {
             if (event.key === 'Enter') {
                 let cmd = event.target.value.trim();
-                const lbl = document.getElementById('customCmdRsp');
-                const now = new Date();
+                const lbl = document.getElementById('appCmdRspLog');
+                if (lbl) {
+                    appendLog(lbl, `SENT(APP): ${cmd}\n`, '<');
+                    lbl.scrollTop = lbl.scrollHeight;
+                }
                 setTimeout(async () => {
                     await peripheral.sendCmd(uuidSvcSatellai, uuidCharApp, cmd);
                 }, 0);
-                // while (true) {
-                    rsp = await new Promise(resolve => (resolveApp = resolve));
-                    console.log('rsp: ' + rsp);
-                    lbl.innerText += `${timestamp()}> ${rsp}`;
-                    lbl.scrollTop = lbl.scrollHeight;
-                    // if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
-                // }
-                // if (document.getElementById('clearOnSent').checked) event.target.value = '';
+                event.target.value = '';
             }
         });
 
@@ -972,8 +1003,7 @@
                 return;
             }
             const lbl = document.getElementById('appCmdRspLog');
-            const currentTimestamp = timestamp(); // Get timestamp once
-            lbl.innerText += `${currentTimestamp}< SENT(APP): ${jsonString}\n`; // Log sent command
+            appendLog(lbl, `SENT(APP): ${jsonString}\n`, '<');
             lbl.scrollTop = lbl.scrollHeight;
 
             // Disable buttons and inputs in the advanced commands section temporarily
@@ -984,13 +1014,13 @@
                 if (peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected) {
                     await peripheral.sendCmd(uuidSvcSatellai, uuidCharApp, jsonString);
                     const rsp = await new Promise(resolve => (resolveApp = resolve)); // resolveApp should be set by your notification handler
-                    lbl.innerText += `${currentTimestamp}> RESP(APP): ${rsp}\n`; // Log response
+                    appendLog(lbl, `RESP(APP): ${rsp}\n`, '>');
                     lbl.scrollTop = lbl.scrollHeight;
                 } else {
                     throw new Error("Device disconnected before command could be fully processed.");
                 }
             } catch (error) {
-                lbl.innerText += `${currentTimestamp}> ERROR(APP): ${error}\n`;
+                appendLog(lbl, `ERROR(APP): ${error}\n`, '>');
                 lbl.scrollTop = lbl.scrollHeight;
                 console.error("Error sending app command or receiving response:", error);
             } finally {
