@@ -200,11 +200,24 @@
                 <div id="wifiMessage" class="text-sm text-gray-600"></div>
 
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    <button class="cmd cmd-button" disabled onclick="handleWifiStatus()">查询 Wi-Fi 状态</button>
-                    <button class="cmd cmd-button" disabled onclick="handleWifiEnable()">开启 Wi-Fi 信标</button>
-                    <button class="cmd cmd-button" disabled onclick="handleWifiDisable()">关闭 Wi-Fi 信标</button>
-                    <button class="cmd cmd-button" disabled onclick="handleWifiScan()">触发 Wi-Fi 扫描</button>
-                    <button class="cmd cmd-button" disabled onclick="handleWifiQueryTags()">查询信标列表</button>
+                <!-- 查询 Wi-Fi 状态按钮移到当前状态栏目 -->
+                <!-- 触发 Wi-Fi 扫描按钮移到最近扫描结果栏目 -->
+                <!-- 查询信标列表按钮移到已保存信标栏目 -->
+                <!-- 此处按钮全部移除，分散到下方栏目 -->
+                </div>
+                <div class="p-3 border rounded-md space-y-2 bg-blue-50 mt-3">
+                    <h4 class="font-medium text-gray-700 mb-2">Wi-Fi 信标配置</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-2 items-center">
+                        <div class="flex flex-wrap gap-2 items-center">
+                            <label class="text-sm text-gray-600">扫描频率:</label>
+                            <input type="number" id="wifiScanFrequency" class="cmd cmd-input w-24" placeholder="60" min="30" value="60" disabled>
+                            <span class="text-sm text-gray-600">秒 (至少30秒)</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <button class="cmd cmd-button w-full md:w-auto" disabled onclick="handleWifiEnable()">开启 Wi-Fi 信标</button>
+                            <button class="cmd cmd-button w-full md:w-auto" disabled onclick="handleWifiDisable()">关闭 Wi-Fi 信标</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="p-3 border rounded-md space-y-2">
@@ -224,17 +237,27 @@
                     </div>
                 </div>
 
+
                 <div class="p-3 border rounded-md bg-gray-50">
+                    <div class="flex mb-2">
+                        <button class="cmd cmd-button mr-2" disabled onclick="handleWifiStatus()">查询 Wi-Fi 状态</button>
+                    </div>
                     <h4 class="font-medium text-gray-700 mb-2">当前 Wi-Fi 状态</h4>
                     <div id="wifiStatusDisplay" class="text-sm text-gray-700"></div>
                 </div>
 
                 <div class="p-3 border rounded-md bg-gray-50">
+                    <div class="flex mb-2">
+                        <button class="cmd cmd-button mr-2" disabled onclick="handleWifiScan()">触发 Wi-Fi 扫描</button>
+                    </div>
                     <h4 class="font-medium text-gray-700 mb-2">最近扫描结果</h4>
                     <div id="wifiScanResults" class="text-sm text-gray-700"></div>
                 </div>
 
                 <div class="p-3 border rounded-md bg-gray-50">
+                    <div class="flex mb-2">
+                        <button class="cmd cmd-button mr-2" disabled onclick="handleWifiQueryTags()">查询信标列表</button>
+                    </div>
                     <h4 class="font-medium text-gray-700 mb-2">已保存的 Wi-Fi 信标</h4>
                     <div id="wifiTagList" class="text-sm text-gray-700"></div>
                 </div>
@@ -1318,7 +1341,7 @@
             const thead = document.createElement('thead');
             thead.className = 'bg-gray-100';
             const headerRow = document.createElement('tr');
-            ['SSID', 'MAC 地址', '信号强度 (dBm)', '加密方式'].forEach(text => headerRow.appendChild(createTableCell(text, true)));
+            ['SSID', 'MAC 地址', '信号强度 (dBm)', '加密方式', '操作'].forEach(text => headerRow.appendChild(createTableCell(text, true)));
             thead.appendChild(headerRow);
             table.appendChild(thead);
 
@@ -1331,6 +1354,35 @@
                 tr.appendChild(createTableCell(item.r !== undefined ? `${item.r}` : '-'));
                 const encryptionLabel = item.e !== undefined ? `${item.e} (${wifiConstants.encryptionMap[item.e] || '未知'})` : '-';
                 tr.appendChild(createTableCell(encryptionLabel));
+
+                // 添加按钮
+                const addTd = document.createElement('td');
+                addTd.className = 'px-1 py-1';
+                const addBtn = document.createElement('button');
+                addBtn.className = 'cmd-button bg-green-500 hover:bg-green-700 text-white px-2 py-1 rounded text-xs';
+                addBtn.textContent = '添加';
+                addBtn.disabled = document.querySelectorAll('.cmd:not(:disabled)').length === 0;
+                addBtn.onclick = async () => {
+                    if (!item.m) return;
+                    setWifiMessage('正在添加 Wi-Fi 信标...', '#2563eb');
+                    const rsp = await sendAppCommandViaBle(JSON.stringify({ c: 'wifi.addtag', p: { s: item.s, m: item.m } }), getWifiCommandOptions());
+                    if (!rsp) {
+                        setWifiMessage('添加 Wi-Fi 信标失败。', '#dc2626');
+                        return;
+                    }
+                    const payload = safeJsonParse(rsp);
+                    const result = payload && typeof payload === 'object' ? payload.r : null;
+                    const message = wifiConstants.addResultMap[result] || `未知返回码：${result}`;
+                    if (result === 0) {
+                        setWifiMessage(message, '#16a34a');
+                        await handleWifiQueryTags({ silent: true });
+                    } else {
+                        setWifiMessage(message, '#dc2626');
+                    }
+                };
+                addTd.appendChild(addBtn);
+                tr.appendChild(addTd);
+
                 tbody.appendChild(tr);
             });
 
@@ -1356,6 +1408,7 @@
             thead.className = 'bg-gray-100';
             const headerRow = document.createElement('tr');
             ['SSID', 'MAC 地址'].forEach(text => headerRow.appendChild(createTableCell(text, true)));
+            headerRow.appendChild(createTableCell('操作', true));
             thead.appendChild(headerRow);
             table.appendChild(thead);
 
@@ -1363,8 +1416,37 @@
             list.forEach(item => {
                 const tr = document.createElement('tr');
                 tr.className = 'odd:bg-white even:bg-gray-50';
+
                 tr.appendChild(createTableCell(item.s || '-'));
                 tr.appendChild(createTableCell(item.m || '-'));
+
+                // 删除按钮
+                const delTd = document.createElement('td');
+                delTd.className = 'px-1 py-1';
+                const delBtn = document.createElement('button');
+                delBtn.className = 'cmd-button bg-red-500 hover:bg-red-700 text-white px-2 py-1 rounded text-xs';
+                delBtn.textContent = '删除';
+                delBtn.disabled = document.querySelectorAll('.cmd:not(:disabled)').length === 0;
+                delBtn.onclick = async () => {
+                    if (!item.m) return;
+                    setWifiMessage('正在删除 Wi-Fi 信标...', '#dc2626');
+                    const rsp = await sendAppCommandViaBle(JSON.stringify({ c: 'wifi.deltag', p: { m: item.m } }), getWifiCommandOptions());
+                    if (!rsp) {
+                        setWifiMessage('删除 Wi-Fi 信标失败。', '#dc2626');
+                        return;
+                    }
+                    const payload = safeJsonParse(rsp);
+                    const result = payload && typeof payload === 'object' ? payload.r : null;
+                    const message = wifiConstants.delResultMap[result] || `未知返回码：${result}`;
+                    if (result === 0) {
+                        setWifiMessage(message, '#16a34a');
+                        await handleWifiQueryTags({ silent: true });
+                    } else {
+                        setWifiMessage(message, '#dc2626');
+                    }
+                };
+                delTd.appendChild(delBtn);
+                tr.appendChild(delTd);
                 tbody.appendChild(tr);
             });
 
@@ -1394,8 +1476,18 @@
         }
 
         async function handleWifiEnable() {
+            const freqInput = document.getElementById('wifiScanFrequency');
+            let frequency = parseInt(freqInput.value, 10);
+            
+            if (isNaN(frequency) || frequency < 30) {
+                setWifiMessage('扫描频率必须至少为 30 秒。', '#dc2626');
+                return;
+            }
+            
             setWifiMessage('正在开启 Wi-Fi 信标功能...', '#2563eb');
-            const rsp = await sendAppCommandViaBle(JSON.stringify({ c: 'wifi.enable' }), getWifiCommandOptions());
+            const cmd = JSON.stringify({ c: 'wifi.enable', p: { f: frequency } });
+            const rsp = await sendAppCommandViaBle(cmd, getWifiCommandOptions());
+            
             if (!rsp) {
                 setWifiMessage('开启 Wi-Fi 信标功能失败。', '#dc2626');
                 return;
