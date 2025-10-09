@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -199,40 +198,87 @@
             <div class="space-y-4 mt-4">
                 <div id="wifiMessage" class="text-sm text-gray-600"></div>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                <!-- 查询 Wi-Fi 状态按钮移到当前状态栏目 -->
-                <!-- 触发 Wi-Fi 扫描按钮移到最近扫描结果栏目 -->
-                <!-- 查询信标列表按钮移到已保存信标栏目 -->
-                <!-- 此处按钮全部移除，分散到下方栏目 -->
-                </div>
-                <div class="p-3 border rounded-md space-y-2 bg-blue-50 mt-3">
-                    <h4 class="font-medium text-gray-700 mb-2">Wi-Fi 信标配置</h4>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-2 items-center">
-                        <div class="flex flex-wrap gap-2 items-center">
-                            <label class="text-sm text-gray-600">扫描频率:</label>
-                            <input type="number" id="wifiScanFrequency" class="cmd cmd-input w-24" placeholder="60" min="30" value="60" disabled>
-                            <span class="text-sm text-gray-600">秒 (至少30秒)</span>
+                <div class="p-4 border rounded-lg shadow-sm bg-white space-y-4">
+                    <h4 class="font-semibold text-gray-800 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"></path>
+                        </svg>
+                        Wi-Fi 信标配置
+                    </h4>
+                    
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <!-- 参数配置区 -->
+                        <div class="space-y-3">
+                            <!-- 扫描频率 -->
+                            <div class="bg-gray-50 p-3 rounded-md border border-gray-200 hover:border-blue-400 transition-colors">
+                                <div class="flex items-center gap-3 flex-wrap">
+                                    <label class="min-w-[6rem] font-medium text-gray-700 text-sm whitespace-nowrap" for="wifiScanFrequency" title="扫描频率，单位秒，最小30秒">
+                                        扫描频率 <span class="text-blue-600 font-semibold">f</span>
+                                    </label>
+                                    <input type="number" id="wifiScanFrequency" 
+                                           class="cmd cmd-input w-20 text-center border border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all" 
+                                           placeholder="60" min="30" value="60" disabled title="最小30秒">
+                                    <span class="text-gray-600 text-sm">秒</span>
+                                    <span class="text-xs text-gray-500">(≥30)</span>
+                                </div>
+                            </div>
+                            
+                            <!-- 丢失阈值 -->
+                            <div class="bg-gray-50 p-3 rounded-md border border-gray-200 hover:border-blue-400 transition-colors">
+                                <div class="flex items-center gap-3 flex-wrap">
+                                    <label class="min-w-[6rem] font-medium text-gray-700 text-sm whitespace-nowrap" for="wifiLostCount" title="最大未检测到信标次数，单位次，最小1次">
+                                        丢失阈值 <span class="text-blue-600 font-semibold">l</span>
+                                    </label>
+                                    <input type="number" id="wifiLostCount" 
+                                           class="cmd cmd-input w-16 text-center border border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all" 
+                                           placeholder="1" min="1" value="1" disabled title="至少1次">
+                                    <span class="text-gray-600 text-sm">次</span>
+                                    <span class="text-xs text-gray-500">(≥1)</span>
+                                </div>
+                            </div>
                         </div>
-                        <div class="flex gap-2">
-                            <button class="cmd cmd-button w-full md:w-auto" disabled onclick="handleWifiEnable()">开启 Wi-Fi 信标</button>
-                            <button class="cmd cmd-button w-full md:w-auto" disabled onclick="handleWifiDisable()">关闭 Wi-Fi 信标</button>
+                        
+                        <!-- 操作按钮区 -->
+                        <div class="flex items-center">
+                            <div class="flex gap-2 flex-wrap w-full">
+                                <button class="cmd cmd-button flex-1 min-w-[140px]" disabled onclick="handleWifiEnable()">
+                                    <span class="flex items-center justify-center gap-2">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                        </svg>
+                                        开启信标
+                                    </span>
+                                </button>
+                                <button class="cmd cmd-button bg-gray-500 hover:bg-gray-600 flex-1 min-w-[140px]" disabled onclick="handleWifiDisable()">
+                                    <span class="flex items-center justify-center gap-2">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                        </svg>
+                                        关闭信标
+                                    </span>
+                                </button>
+                            </div>
                         </div>
+                    </div>
+                    
+                    <div class="text-xs text-gray-600 bg-blue-50 p-3 rounded-md border border-blue-200">
+                        <strong class="text-gray-800">说明：</strong>f 为扫描频率（秒），l 为连续未检测到信标的次数阈值，达到后上报丢失事件
                     </div>
                 </div>
 
-                <div class="p-3 border rounded-md space-y-2">
-                    <h4 class="font-medium text-gray-700">添加 Wi-Fi 信标</h4>
+                <div class="p-4 border rounded-lg shadow-sm bg-white space-y-3">
+                    <h4 class="font-semibold text-gray-800">添加 Wi-Fi 信标</h4>
                     <div class="flex flex-wrap gap-2">
-                        <input type="text" id="wifiAddSsid" class="cmd cmd-input flex-grow min-w-[180px]" placeholder="SSID" disabled>
-                        <input type="text" id="wifiAddMac" class="cmd cmd-input flex-grow min-w-[180px]" placeholder="MAC 地址 (例如: 12:34:56:78:9A:BC)" disabled>
+                        <input type="text" id="wifiAddSsid" class="cmd cmd-input flex-1 min-w-[180px]" placeholder="SSID" disabled>
+                        <input type="text" id="wifiAddMac" class="cmd cmd-input flex-1 min-w-[180px]" placeholder="MAC 地址 (例如: 12:34:56:78:9A:BC)" disabled>
                         <button class="cmd cmd-button" disabled onclick="handleWifiAddTag()">添加</button>
                     </div>
                 </div>
 
-                <div class="p-3 border rounded-md space-y-2">
-                    <h4 class="font-medium text-gray-700">删除 Wi-Fi 信标</h4>
+                <div class="p-4 border rounded-lg shadow-sm bg-white space-y-3">
+                    <h4 class="font-semibold text-gray-800">删除 Wi-Fi 信标</h4>
                     <div class="flex flex-wrap gap-2">
-                        <input type="text" id="wifiDeleteMac" class="cmd cmd-input flex-grow min-w-[180px]" placeholder="MAC 地址" disabled>
+                        <input type="text" id="wifiDeleteMac" class="cmd cmd-input flex-1 min-w-[180px]" placeholder="MAC 地址" disabled>
                         <button class="cmd cmd-button" disabled onclick="handleWifiDeleteTag()">删除</button>
                     </div>
                 </div>
@@ -1477,15 +1523,21 @@
 
         async function handleWifiEnable() {
             const freqInput = document.getElementById('wifiScanFrequency');
+            const lostCountInput = document.getElementById('wifiLostCount');
             let frequency = parseInt(freqInput.value, 10);
+            let lostCount = parseInt(lostCountInput.value, 10);
             
             if (isNaN(frequency) || frequency < 30) {
                 setWifiMessage('扫描频率必须至少为 30 秒。', '#dc2626');
                 return;
             }
+            if (isNaN(lostCount) || lostCount < 1) {
+                setWifiMessage('最大未检测到信标次数必须至少为 1。', '#dc2626');
+                return;
+            }
             
             setWifiMessage('正在开启 Wi-Fi 信标功能...', '#2563eb');
-            const cmd = JSON.stringify({ c: 'wifi.enable', p: { f: frequency } });
+            const cmd = JSON.stringify({ c: 'wifi.enable', p: { f: frequency, l: lostCount } });
             const rsp = await sendAppCommandViaBle(cmd, getWifiCommandOptions());
             
             if (!rsp) {
