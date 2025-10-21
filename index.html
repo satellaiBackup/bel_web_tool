@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -449,7 +450,6 @@
             });
         }
 
-        let resolveData = null;
         let resolveDfu = null;
 
         const DEFAULT_APP_RESPONSE_TIMEOUT = 400;
@@ -473,41 +473,56 @@
             try {
                 await peripheral.request();
                 await peripheral.connect();
+                
+                // 持续监听NUS服务的通知 - 显示所有接收到的数据
                 await peripheral.startCmdNotifications(uuidSvcNus, uuidCharNotify, event => {
-                const text = new TextDecoder().decode(event.target.value);
-                const lbl = document.getElementById('customCmdRsp');
-                if (lbl) {
-                    appendLog(lbl, text, '>');
-                    lbl.scrollTop = lbl.scrollHeight;
-                }
-                if (resolveData) {
-                    resolveData(text);
-                    resolveData = null;
-                }
-            });
+                    const text = new TextDecoder().decode(event.target.value);
+                    const lbl = document.getElementById('customCmdRsp');
+                    if (lbl) {
+                        appendLog(lbl, text, '>');
+                        lbl.scrollTop = lbl.scrollHeight;
+                    }
+                    // 不再使用resolveData，改为通过waitForCmdResponse函数从日志中检测响应
+                });
                 await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharApp, event => {
-                const text = new TextDecoder().decode(event.target.value);
-                if (pendingAppResponse) {
-                    pendingAppResponse.buffer += text;
-                    if (pendingAppResponse.inactivityTimer) clearTimeout(pendingAppResponse.inactivityTimer);
-                    pendingAppResponse.inactivityTimer = setTimeout(() => {
-                        flushPendingAppResponse();
-                    }, pendingAppResponse.inactivityMs);
-                } else {
+                    const text = new TextDecoder().decode(event.target.value);
+                    
+                    // 总是在APP日志中显示接收到的数据
                     const appLbl = document.getElementById('appCmdRspLog');
                     if (appLbl) {
                         appendLog(appLbl, text, '>');
                         appLbl.scrollTop = appLbl.scrollHeight;
                     }
-                }
-            });
+                    
+                    // 尝试解析JSON并处理wifi-scan事件
+                    try {
+                        const responses = parseMultipleJsonResponses(text);
+                        responses.forEach(response => {
+                            if (response.e === 'wifi-scan') {
+                                handleWifiScanEvent(response);
+                            }
+                        });
+                    } catch (error) {
+                        // 如果解析失败，不影响其他功能
+                        console.debug('解析wifi-scan事件失败:', error);
+                    }
+                    
+                    // 如果有等待APP响应的Promise，也要处理
+                    if (pendingAppResponse) {
+                        pendingAppResponse.buffer += text;
+                        if (pendingAppResponse.inactivityTimer) clearTimeout(pendingAppResponse.inactivityTimer);
+                        pendingAppResponse.inactivityTimer = setTimeout(() => {
+                            flushPendingAppResponse();
+                        }, pendingAppResponse.inactivityMs);
+                    }
+                });
                 await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharDfu, event => {
-                if (resolveDfu) {
-                    resolveDfu(event.target.value);
-                    resolveDfu = null;
-                }
-                else console.warn(event.target.value);
-            });
+                    if (resolveDfu) {
+                        resolveDfu(event.target.value);
+                        resolveDfu = null;
+                    }
+                    else console.warn(event.target.value);
+                });
             } catch (error) {
                 console.error('[ERROR] 设备连接或订阅失败:', error);
                 flushPendingAppResponse();
@@ -856,6 +871,49 @@
             console.log(`[INFO]SENT ${size} BYTES in ${t1 - t0}ms, TRANSFER RATE: ${(size / (t1 - t0)).toFixed(1)} KB/s`);
         }
 
+        // 通用的命令响应检测函数，不独占数据接收
+        async function waitForCmdResponse(command, timeout = 10000) {
+            const logElement = document.getElementById('customCmdRsp');
+            if (!logElement) return '日志元素未找到';
+            
+            const initialLogLength = logElement.innerText.length;
+            const startTime = Date.now();
+            
+            while (true) {
+                // 检查是否超时
+                if (Date.now() - startTime > timeout) {
+                    return '超时 - 未收到响应';
+                }
+                
+                // 从日志中提取新的响应内容
+                const currentLog = logElement.innerText;
+                const newContent = currentLog.substring(initialLogLength);
+                
+                // 查找所有接收到的响应行（以>开头的行）
+                const lines = newContent.split('\n');
+                let rsp = '';
+                
+                for (const line of lines) {
+                    if (line.trim()) {
+                        // 匹配接收到的数据行（格式：时间戳> 内容）
+                        const match = line.match(/^\d{2}:\d{2}:\d{2}\.\d{3}> (.*)$/);
+                        if (match) {
+                            const content = match[1];
+                            rsp += content + '\r\n';
+                            
+                            // 检查是否收到完整的响应
+                            if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) {
+                                return rsp;
+                            }
+                        }
+                    }
+                }
+                
+                // 短暂等待后再次检查
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+        }
+
         async function sendCmdAndWaitForOK(btn) {
             document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
             const lbl = document.querySelector(`label[for="${btn.id}"]`);
@@ -863,15 +921,14 @@
             setTimeout(async () => {
                 await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, btn.id); 
             }, 0);
-            let rsp = '';
-            while (true) {
-                rsp += await new Promise(resolve => (resolveData = resolve));
-                console.log('rsp: ' + rsp);
-                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
-            }
-            lbl.innerText = rsp;
+            
+            const rsp = await waitForCmdResponse(btn.id);
+            
+            lbl.innerText = rsp || '未收到有效响应';
             if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
             else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+            else lbl.style.color = 'orange';
+            
             document.querySelectorAll('.cmd').forEach(btn => btn.disabled = false);
         }
 
@@ -898,14 +955,14 @@
                 setTimeout(async () => {
                     await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+GNSS1TEST=1');                    
                 }, 0);
-                let rsp = await new Promise(resolve => (resolveData = resolve));
+                let rsp = await waitForCmdResponse('AT+GNSS1TEST=1');
                 console.log(rsp);
             }
              else {
                 setTimeout(async () => {
                     await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+GNSS1TEST=0');                    
                 }, 0);
-                let rsp = await new Promise(resolve => (resolveData = resolve));
+                let rsp = await waitForCmdResponse('AT+GNSS1TEST=0');
                 console.log(rsp);
                 await peripheral.stopCmdNotifications(uuidSvcSatellai, uuidCharRtt, gnssReceiveHandler);
             }
@@ -915,34 +972,30 @@
             setTimeout(async () => {
                 await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+SN?');                    
             }, 0);
-            let rsp = '';
-            while (true) {
-                rsp += await new Promise(resolve => (resolveData = resolve));
-                console.log('rsp: ' + rsp);
-                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
-            }
+            
+            const rsp = await waitForCmdResponse('AT+SN?');
             console.log(rsp);
+            
             const lbl = document.querySelector(`label[for="readSN"]`);
             lbl.innerText = rsp;
             if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
             else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+            else lbl.style.color = 'orange';
         }
 
         async function writeWWANTryCnt() {
+            const cmd = 'AT+WWANTRY='+document.getElementById('WWANTRY').value;
             setTimeout(async () => {
-                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+WWANTRY='+document.getElementById('WWANTRY').value);                    
+                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, cmd);                    
             }, 0);
-            let rsp = '';
-            while (true) {
-                rsp += await new Promise(resolve => (resolveData = resolve));
-                console.log('rsp: ' + rsp);
-                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
-            }
+            
+            const rsp = await waitForCmdResponse(cmd);
             console.log(rsp);
             const lbl = document.querySelector(`label[for="writeWWANTryCnt"]`);
             lbl.innerText = rsp;
             if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
             else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+            else lbl.style.color = 'orange';
         }
 
 
@@ -950,17 +1003,14 @@
             setTimeout(async () => {
                 await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+WWANTRY?');                    
             }, 0);
-            let rsp = '';
-            while (true) {
-                rsp += await new Promise(resolve => (resolveData = resolve));
-                console.log('rsp: ' + rsp);
-                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
-            }
+            
+            const rsp = await waitForCmdResponse('AT+WWANTRY?');
             console.log(rsp);
             const lbl = document.querySelector(`label[for="readWWANTryCnt"]`);
             lbl.innerText = rsp;
             if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
             else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+            else lbl.style.color = 'orange';
         }
 
         async function writeNTNsendData() {
@@ -1028,23 +1078,24 @@
 
 
 
-            setTimeout(async () => {
-                if (selectedMode === 'ascii')
-                    await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+NTNDATA=0,"'+document.getElementById('NTNsend').value+'"');          
-                else
-                    await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+NTNDATA=1,"'+ parsedBytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('') +'"');          
-            }, 0);
-            let rsp = '';
-            while (true) {
-                rsp += await new Promise(resolve => (resolveData = resolve));
-                console.log('rsp: ' + rsp);
-                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
+            let cmd;
+            if (selectedMode === 'ascii') {
+                cmd = 'AT+NTNDATA=0,"'+document.getElementById('NTNsend').value+'"';
+            } else {
+                cmd = 'AT+NTNDATA=1,"'+ parsedBytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('') +'"';
             }
+            
+            setTimeout(async () => {
+                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, cmd);          
+            }, 0);
+            
+            const rsp = await waitForCmdResponse(cmd);
             console.log(rsp);
             const lbl = document.querySelector(`label[for="writeNTNsendData"]`);
             lbl.innerText = rsp;
             if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
             else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+            else lbl.style.color = 'orange';
         }
 
         // Add event listeners to radio buttons to potentially clear input or provide feedback on mode change
@@ -1090,34 +1141,30 @@
             setTimeout(async () => {
                 await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+NTNDATA?');                    
             }, 0);
-            let rsp = '';
-            while (true) {
-                rsp += await new Promise(resolve => (resolveData = resolve));
-                console.log('rsp: ' + rsp);
-                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
-            }
+            
+            const rsp = await waitForCmdResponse('AT+NTNDATA?');
             console.log(rsp);
+            
             const lbl = document.querySelector(`label[for="readNTNsendData"]`);
             lbl.innerText = rsp;
             if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
             else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+            else lbl.style.color = 'orange';
         }
 
         async function readservingcell() {
             setTimeout(async () => {
                 await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+SERVINGCELL?');                    
             }, 0);
-            let rsp = '';
-            while (true) {
-                rsp += await new Promise(resolve => (resolveData = resolve));
-                console.log('rsp: ' + rsp);
-                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
-            }
+            
+            const rsp = await waitForCmdResponse('AT+SERVINGCELL?');
             console.log(rsp);
+            
             const lbl = document.querySelector(`label[for="readservingcell"]`);
             lbl.innerText = rsp;
             if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
             else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
+            else lbl.style.color = 'orange';
         }
         
         
@@ -1125,12 +1172,8 @@
             setTimeout(async () => {
                 await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+DEVSTATE?');
             }, 0);
-            let rsp = '';
-            while (true) {
-                rsp += await new Promise(resolve => (resolveData = resolve));
-                console.log('rsp: ' + rsp);
-                if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) break;
-            }
+            
+            const rsp = await waitForCmdResponse('AT+DEVSTATE?');
             console.log('Original rsp: ' + rsp); // Log the original response
 
             const lbl = document.querySelector(`label[for="readDEVstate"]`);
@@ -1300,8 +1343,8 @@
                     containerSelector: '#wifiCommandsSection',
                     logElementId: 'wifiCmdRspLog',
                     labelPrefix: 'WIFI',
-                    responseTimeout: 800,
-                    maxWait: 10000
+                    responseTimeout: 2000,  // 增加到2秒，避免过早超时
+                    maxWait: 15000          // 增加到15秒，给更多时间处理
                 };
             }
             return globalThis.__wifiCommandOptions;
@@ -1317,11 +1360,95 @@
             }
         }
 
+        function parseMultipleJsonResponses(str) {
+            if (typeof str !== 'string') return [];
+            
+            const results = [];
+            let currentPos = 0;
+            
+            while (currentPos < str.length) {
+                // 跳过空白字符
+                while (currentPos < str.length && /\s/.test(str[currentPos])) {
+                    currentPos++;
+                }
+                
+                if (currentPos >= str.length) break;
+                
+                // 寻找JSON对象的开始
+                if (str[currentPos] === '{') {
+                    let braceCount = 0;
+                    let jsonStart = currentPos;
+                    
+                    // 找到完整的JSON对象
+                    while (currentPos < str.length) {
+                        if (str[currentPos] === '{') {
+                            braceCount++;
+                        } else if (str[currentPos] === '}') {
+                            braceCount--;
+                            if (braceCount === 0) {
+                                // 找到完整的JSON对象
+                                const jsonStr = str.substring(jsonStart, currentPos + 1);
+                                const parsed = safeJsonParse(jsonStr);
+                                if (parsed) {
+                                    results.push(parsed);
+                                }
+                                currentPos++;
+                                break;
+                            }
+                        }
+                        currentPos++;
+                    }
+                } else {
+                    currentPos++;
+                }
+            }
+            
+            return results;
+        }
+
         function setWifiMessage(message, color = '#4b5563') {
             const el = document.getElementById('wifiMessage');
             if (!el) return;
             el.textContent = message || '';
             el.style.color = color;
+        }
+
+        function initWifiScanResults() {
+            if (!globalThis.currentWifiScanResults) {
+                globalThis.currentWifiScanResults = [];
+            }
+            globalThis.currentWifiScanResults = [];
+            
+            const container = document.getElementById('wifiScanResults');
+            if (container) {
+                container.innerHTML = '<div class="text-gray-500 text-sm">等待扫描结果...</div>';
+            }
+        }
+
+        function addWifiScanResult(scanResult) {
+            if (!globalThis.currentWifiScanResults) {
+                globalThis.currentWifiScanResults = [];
+            }
+            
+            // 检查是否已存在相同MAC地址的结果，如果存在则更新
+            const existingIndex = globalThis.currentWifiScanResults.findIndex(item => item.m === scanResult.m);
+            if (existingIndex >= 0) {
+                globalThis.currentWifiScanResults[existingIndex] = scanResult;
+            } else {
+                globalThis.currentWifiScanResults.push(scanResult);
+            }
+            
+            // 实时更新显示
+            renderWifiScanResults({ r: globalThis.currentWifiScanResults });
+            
+            // 更新消息显示扫描到的数量
+            setWifiMessage(`已扫描到 ${globalThis.currentWifiScanResults.length} 个 Wi-Fi 信标`, '#16a34a');
+        }
+
+        function handleWifiScanEvent(eventData) {
+            if (eventData && eventData.e === 'wifi-scan' && eventData.r) {
+                addWifiScanResult(eventData.r);
+            }
         }
 
         function createTableCell(text, header = false) {
@@ -1564,19 +1691,23 @@
         }
 
         async function handleWifiScan() {
+            // 初始化扫描结果显示
+            initWifiScanResults();
             setWifiMessage('正在扫描附近的 Wi-Fi 信标...', '#2563eb');
+            
             const rsp = await sendAppCommandViaBle(JSON.stringify({ c: 'wifi.scan' }), getWifiCommandOptions());
             if (!rsp) {
                 setWifiMessage('触发 Wi-Fi 扫描失败。', '#dc2626');
                 return;
             }
+            
+            // 解析响应，只检查扫描命令是否被确认
             const payload = safeJsonParse(rsp);
-            if (!payload) {
-                setWifiMessage('无法解析 Wi-Fi 扫描结果。', '#dc2626');
-                return;
+            if (payload && payload.c === 'wifi.scan' && payload.r === 0) {
+                setWifiMessage('Wi-Fi 扫描已启动，正在等待结果...', '#2563eb');
+            } else {
+                setWifiMessage('Wi-Fi 扫描命令执行失败。', '#dc2626');
             }
-            renderWifiScanResults(payload);
-            setWifiMessage('已更新 Wi-Fi 扫描结果。', '#16a34a');
         }
 
         async function handleWifiAddTag() {
