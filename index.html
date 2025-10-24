@@ -194,6 +194,17 @@
             </div>
         </details>
 
+        <details id="eventMessagesSection" class="mb-6 bg-white shadow-md rounded-lg p-4">
+            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">事件消息 ({"e":"xxxxx"})</summary>
+            <div class="overflow-x-auto mt-4">
+                <div class="mb-3 flex justify-between items-center">
+                    <label class="block font-medium text-gray-700">事件消息列表:</label>
+                    <button id="clearEventMessages" class="cmd-button bg-gray-500 hover:bg-gray-600 text-sm px-3 py-1" onclick="clearEventMessages()">清空消息</button>
+                </div>
+                <div id="eventMessagesLog" class="block max-h-[300px] h-[300px] overflow-y-auto bg-gray-100 p-2 border border-gray-300 rounded-md text-sm font-mono"></div>
+            </div>
+        </details>
+
         <details id="wifiCommandsSection" class="mb-6 bg-white shadow-md rounded-lg p-4">
             <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">Wi-Fi 信标工具</summary>
             <div class="space-y-4 mt-4">
@@ -460,6 +471,13 @@
             return peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected;
         }
 
+        function clearEventMessages() {
+            const eventLbl = document.getElementById('eventMessagesLog');
+            if (eventLbl) {
+                eventLbl.innerText = '';
+            }
+        }
+
         function flushPendingAppResponse() {
             if (!pendingAppResponse) return;
             const { resolve, buffer, inactivityTimer, overallTimer } = pendingAppResponse;
@@ -474,7 +492,16 @@
                 await peripheral.request();
                 await peripheral.connect();
                 
-                // 持续监听NUS服务的通知 - 显示所有接收到的数据
+        // 用于跟踪待处理命令的Map
+        const pendingCommands = new Map();
+        let commandIdCounter = 0;
+        
+        // 生成唯一命令ID
+        function generateCommandId() {
+            return `cmd_${++commandIdCounter}_${Date.now()}`;
+        }
+        
+        // 持续监听NUS服务的通知 - 显示所有接收到的数据
                 await peripheral.startCmdNotifications(uuidSvcNus, uuidCharNotify, event => {
                     const text = new TextDecoder().decode(event.target.value);
                     const lbl = document.getElementById('customCmdRsp');
@@ -482,7 +509,26 @@
                         appendLog(lbl, text, '>');
                         lbl.scrollTop = lbl.scrollHeight;
                     }
-                    // 不再使用resolveData，改为通过waitForCmdResponse函数从日志中检测响应
+                    
+                    // 检查是否有待处理的命令需要响应
+                    if (pendingCommands.size > 0) {
+                        // 获取最早的待处理命令
+                        const [commandId, commandInfo] = pendingCommands.entries().next().value;
+                        
+                        // 将接收到的文本添加到命令响应缓冲区
+                        commandInfo.response += text;
+                        commandInfo.lastActivityTime = Date.now();
+                        
+                        // 检查是否收到完整的响应
+                        if (commandInfo.response.endsWith('OK\r\n') || commandInfo.response.endsWith('ERROR\r\n')) {
+                            // 命令完成，解决Promise
+                            if (commandInfo.resolve) {
+                                commandInfo.resolve(commandInfo.response);
+                            }
+                            // 从待处理列表中移除
+                            pendingCommands.delete(commandId);
+                        }
+                    }
                 });
                 await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharApp, event => {
                     const text = new TextDecoder().decode(event.target.value);
@@ -494,17 +540,28 @@
                         appLbl.scrollTop = appLbl.scrollHeight;
                     }
                     
-                    // 尝试解析JSON并处理wifi-scan事件
+                    // 尝试解析JSON并处理各种事件
                     try {
                         const responses = parseMultipleJsonResponses(text);
                         responses.forEach(response => {
-                            if (response.e === 'wifi-scan') {
-                                handleWifiScanEvent(response);
+                            // 检查是否是事件类消息 ({"e":"xxxxx"})
+                            if (response.e !== undefined) {
+                                // 将事件类消息添加到专门的事件消息区域
+                                const eventLbl = document.getElementById('eventMessagesLog');
+                                if (eventLbl) {
+                                    appendLog(eventLbl, JSON.stringify(response), '>');
+                                    eventLbl.scrollTop = eventLbl.scrollHeight;
+                                }
+                                
+                                // 如果是wifi-scan事件，还需要特殊处理
+                                if (response.e === 'wifi-scan') {
+                                    handleWifiScanEvent(response);
+                                }
                             }
                         });
                     } catch (error) {
                         // 如果解析失败，不影响其他功能
-                        console.debug('解析wifi-scan事件失败:', error);
+                        console.debug('解析事件失败:', error);
                     }
                     
                     // 如果有等待APP响应的Promise，也要处理
@@ -525,6 +582,15 @@
                 });
             } catch (error) {
                 console.error('[ERROR] 设备连接或订阅失败:', error);
+                
+                // 清理所有待处理的命令
+                pendingCommands.forEach((commandInfo, commandId) => {
+                    if (commandInfo.reject) {
+                        commandInfo.reject(new Error('设备连接失败'));
+                    }
+                });
+                pendingCommands.clear();
+                
                 flushPendingAppResponse();
                 if (peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected) {
                     try { peripheral.device.gatt.disconnect(); } catch (e) { console.warn(e); }
@@ -610,6 +676,14 @@
         });
 
         document.getElementById('disconnect').addEventListener('click', async event => {
+            // 清理所有待处理的命令
+            pendingCommands.forEach((commandInfo, commandId) => {
+                if (commandInfo.reject) {
+                    commandInfo.reject(new Error('设备已断开连接'));
+                }
+            });
+            pendingCommands.clear();
+            
             //忽略取消订阅
             peripheral.disconnect();
         });
@@ -871,47 +945,48 @@
             console.log(`[INFO]SENT ${size} BYTES in ${t1 - t0}ms, TRANSFER RATE: ${(size / (t1 - t0)).toFixed(1)} KB/s`);
         }
 
-        // 通用的命令响应检测函数，不独占数据接收
+        // 通用的命令响应检测函数，使用命令跟踪机制
         async function waitForCmdResponse(command, timeout = 10000) {
-            const logElement = document.getElementById('customCmdRsp');
-            if (!logElement) return '日志元素未找到';
-            
-            const initialLogLength = logElement.innerText.length;
-            const startTime = Date.now();
-            
-            while (true) {
-                // 检查是否超时
-                if (Date.now() - startTime > timeout) {
-                    return '超时 - 未收到响应';
-                }
+            return new Promise((resolve, reject) => {
+                // 生成唯一命令ID
+                const commandId = generateCommandId();
                 
-                // 从日志中提取新的响应内容
-                const currentLog = logElement.innerText;
-                const newContent = currentLog.substring(initialLogLength);
+                // 将命令添加到待处理列表
+                pendingCommands.set(commandId, {
+                    command: command,
+                    response: '',
+                    resolve: resolve,
+                    reject: reject,
+                    startTime: Date.now(),
+                    lastActivityTime: Date.now()
+                });
                 
-                // 查找所有接收到的响应行（以>开头的行）
-                const lines = newContent.split('\n');
-                let rsp = '';
-                
-                for (const line of lines) {
-                    if (line.trim()) {
-                        // 匹配接收到的数据行（格式：时间戳> 内容）
-                        const match = line.match(/^\d{2}:\d{2}:\d{2}\.\d{3}> (.*)$/);
-                        if (match) {
-                            const content = match[1];
-                            rsp += content + '\r\n';
-                            
-                            // 检查是否收到完整的响应
-                            if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) {
-                                return rsp;
-                            }
-                        }
+                // 设置超时定时器
+                const timeoutTimer = setTimeout(() => {
+                    if (pendingCommands.has(commandId)) {
+                        pendingCommands.delete(commandId);
+                        resolve('超时 - 未收到响应');
                     }
-                }
+                }, timeout);
                 
-                // 短暂等待后再次检查
-                await new Promise(resolve => setTimeout(resolve, 50));
-            }
+                // 定期检查命令是否超时（基于最后活动时间）
+                const checkInterval = setInterval(() => {
+                    if (pendingCommands.has(commandId)) {
+                        const commandInfo = pendingCommands.get(commandId);
+                        // 如果超过最后活动时间2秒没有新数据，认为命令已完成
+                        if (Date.now() - commandInfo.lastActivityTime > 2000 && commandInfo.response.length > 0) {
+                            clearInterval(checkInterval);
+                            clearTimeout(timeoutTimer);
+                            pendingCommands.delete(commandId);
+                            resolve(commandInfo.response || '未收到完整响应');
+                        }
+                    } else {
+                        // 命令已完成，清理定时器
+                        clearInterval(checkInterval);
+                        clearTimeout(timeoutTimer);
+                    }
+                }, 500);
+            });
         }
 
         async function sendCmdAndWaitForOK(btn) {
