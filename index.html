@@ -49,16 +49,19 @@
                         <div class="space-y-4 mb-6">
                             <div class="flex items-center gap-2">
                                 <label for="fwfile" class="font-medium text-gray-700">固件升级:</label>
-                                <input type="file" id="fwfile" class="cmd" disabled onchange="chooseFile(this)">
+                                <input type="file" id="fwfile" class="cmd" disabled>
+                                <button class="cmd cmd-button" disabled onclick="chooseFile(document.getElementById('fwfile'))">开始升级</button>
                             </div>
                             <div class="flex items-center gap-2">
                                 <label for="certfile" class="font-medium text-gray-700">写入证书:</label>
-                                <input type="file" id="certfile" class="cmd" disabled onchange="sendCert(this)">
+                                <input type="file" id="certfile" class="cmd" disabled>
+                                <button class="cmd cmd-button" disabled onclick="sendCert(document.getElementById('certfile'))">写入证书</button>
                             </div>
                             <div class="flex items-center gap-2 flex-wrap">
                                 <label for="genericfile" class="font-medium text-gray-700">上传文件:</label>
-                                <input type="file" id="genericfile" class="cmd" disabled onchange="sendFile(this)">
+                                <input type="file" id="genericfile" class="cmd" disabled>
                                 <input type="text" id="genericfilePath" placeholder="可选路径 (例如: /logs/)" class="cmd min-w-[200px] sm:min-w-[320px] flex-grow" disabled>
+                                <button class="cmd cmd-button" disabled onclick="sendFile(document.getElementById('genericfile'))">上传文件</button>
                             </div>
                         </div>
                     </tbody>
@@ -691,6 +694,7 @@
         function chooseFile(input) {
             console.log(input);
             const file = input.files[0];
+            if (!file) { alert('请先选择固件文件'); return; }
             if (file) {
                 console.log(file);
                 const reader = new FileReader();
@@ -707,6 +711,7 @@
         function sendCert(input) {
             console.log(input);
             const file = input.files[0];
+            if (!file) { alert('请先选择证书文件'); return; }
             if (file) {
                 console.log(file);
                 const reader = new FileReader();
@@ -726,6 +731,7 @@
         function sendFile(input) {
             console.log(input);
             const file = input.files[0];
+            if (!file) { alert('请先选择要上传的文件'); return; }
             if (file) {
                 console.log(file);
                 const reader = new FileReader();
