@@ -21,7 +21,7 @@
         button.cmd-button:disabled {
             @apply bg-gray-300 hover:bg-gray-300 cursor-not-allowed shadow-none;
         }
-        input[type="text"], input[type="file"] {
+        input[type="text"], input[type="file"], select {
             @apply border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
         }
         label#status {
@@ -34,11 +34,18 @@
         <h1 class="text-3xl font-bold mb-2 text-blue-600">蓝牙调试助手</h1>
         <p class="mb-4 text-sm text-gray-600">Copyright SATELLAI 2024 (要求版本<b class="text-red-500">v8.1.0</b>以上)</p>
         
-        <div class="flex flex-wrap gap-2 mb-6 items-center">
+        <div class="mb-6 space-y-2">
+            <div class="flex flex-wrap gap-2 items-center">
             <input type="text" id="nameFilter" placeholder="设备名称前缀 (例如: SATELLAI)" class="min-w-[200px] sm:min-w-[320px] flex-grow">
-            <button id="scanAndConnect" class="cmd-button">扫描设备并连接</button>
-            <button id="disconnect" class="cmd-button bg-red-500 hover:bg-red-700">断开连接</button>
-            <label id="status" class="text-red-500 font-semibold">未连接</label>
+            <button id="scanDevices" class="cmd-button">扫描设备</button>
+            <select id="deviceSelect" class="min-w-[260px] sm:min-w-[420px] flex-grow bg-white">
+                <option value="">请先扫描设备</option>
+            </select>
+            <button id="scanAndConnect" class="cmd-button">连接选中设备</button>
+            <button id="disconnect" class="cmd-button bg-red-500 hover:bg-red-700" hidden>断开连接</button>
+            <label id="status" class="text-gray-500 font-semibold">待连接</label>
+            </div>
+            <div id="deviceSummary" class="text-xs text-gray-600">请先扫描设备，列表会显示名称、MAC 和 RSSI。</div>
         </div>
 
         <details class="mb-6 bg-white shadow-md rounded-lg p-4">
@@ -340,77 +347,466 @@
         uuidCharWrite = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
         uuidCharNotify = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
+        const bleApiBase = '/api/ble';
+        let bleScanResults = [];
+        let bleEventSource = null;
+        let bleScanLoopActive = false;
+        let bleScanLoopRunId = 0;
+
+        function normalizeBleUuid(uuid) {
+            return String(uuid || '').trim().toLowerCase();
+        }
+
+        function makeBleNotificationKey(serviceUuid, characteristicUuid) {
+            return `${normalizeBleUuid(serviceUuid)}|${normalizeBleUuid(characteristicUuid)}`;
+        }
+
+        function setConnectionStatus(text, color = 'red') {
+            const status = document.getElementById('status');
+            status.innerText = text;
+            status.style.color = color;
+        }
+
+        function formatConnectedDeviceLabel(device) {
+            if (!device) {
+                return '设备';
+            }
+
+            const name = device.name || '设备';
+            const address = (device.address || '').toUpperCase();
+            if (!address) {
+                return name;
+            }
+
+            const parts = address.split(':');
+            const shortAddress = parts.length >= 2 ? parts.slice(-2).join(':') : address;
+            return `${name} · ${shortAddress}`;
+        }
+
+        function setBleConnectionControls(connected) {
+            const nameFilter = document.getElementById('nameFilter');
+            const scanButton = document.getElementById('scanDevices');
+            const deviceSelect = document.getElementById('deviceSelect');
+            const connectButton = document.getElementById('scanAndConnect');
+            const disconnectButton = document.getElementById('disconnect');
+            const summary = document.getElementById('deviceSummary');
+
+            nameFilter.hidden = connected;
+            scanButton.hidden = connected;
+            deviceSelect.hidden = connected;
+            connectButton.hidden = connected;
+            disconnectButton.hidden = !connected;
+
+            scanButton.disabled = connected;
+            deviceSelect.disabled = connected || bleScanResults.length === 0;
+            connectButton.disabled = connected || bleScanResults.length === 0;
+            disconnectButton.disabled = !connected;
+            summary.hidden = connected;
+
+            if (connected) {
+                summary.innerText = '';
+            } else if (bleScanResults.length > 0) {
+                summary.innerText = `已扫描到 ${bleScanResults.length} 台设备，选择后即可连接。`;
+            } else {
+                summary.innerText = '请先扫描设备，列表会显示名称、MAC 和 RSSI。';
+            }
+        }
+
+        function applySyncedBleConnectionState(device) {
+            if (!device || !device.address) {
+                return;
+            }
+
+            peripheral.device = {
+                address: device.address,
+                name: device.name || device.address,
+                gatt: {
+                    connected: true
+                }
+            };
+
+            setConnectionStatus(`已连接 · ${formatConnectedDeviceLabel(peripheral.device)}`, 'green');
+            setBleConnectionControls(true);
+            document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
+        }
+
+        function resetBleConnectionState() {
+            peripheral.device = null;
+            peripheral.notificationListeners.clear();
+            peripheral.notificationSubscriptions.clear();
+            setConnectionStatus('待连接', '#6b7280');
+            setBleConnectionControls(false);
+            document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
+        }
+
+        async function syncBleStateFromBackend() {
+            try {
+                const state = await bleApiRequest(`${bleApiBase}/state`);
+                if (state && state.connected && state.device) {
+                    applySyncedBleConnectionState(state.device);
+                    return state;
+                }
+
+                resetBleConnectionState();
+                return state;
+            } catch (error) {
+                console.warn('[WARN] 同步蓝牙连接状态失败:', error);
+                return null;
+            }
+        }
+
+        async function bleApiRequest(path, options = {}) {
+            const response = await fetch(path, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(options.headers || {})
+                },
+                ...options
+            });
+
+            const rawText = await response.text();
+            let payload = null;
+            if (rawText) {
+                try {
+                    payload = JSON.parse(rawText);
+                } catch (error) {
+                    payload = null;
+                }
+            }
+
+            if (!response.ok) {
+                throw new Error(payload && payload.error ? payload.error : (rawText || `HTTP ${response.status}`));
+            }
+
+            return payload;
+        }
+
+        function encodeBase64FromBytes(data) {
+            let bytes = data;
+            if (typeof bytes === 'string') {
+                bytes = new TextEncoder().encode(bytes);
+            } else if (bytes instanceof ArrayBuffer) {
+                bytes = new Uint8Array(bytes);
+            } else if (ArrayBuffer.isView(bytes)) {
+                bytes = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            }
+
+            if (!(bytes instanceof Uint8Array)) {
+                throw new Error('无法编码当前数据类型');
+            }
+
+            let binary = '';
+            const chunkSize = 0x8000;
+            for (let index = 0; index < bytes.length; index += chunkSize) {
+                binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+            }
+            return btoa(binary);
+        }
+
+        function decodeBase64ToDataView(encoded) {
+            const binary = atob(encoded || '');
+            const bytes = new Uint8Array(binary.length);
+            for (let index = 0; index < binary.length; index += 1) {
+                bytes[index] = binary.charCodeAt(index);
+            }
+            return new DataView(bytes.buffer);
+        }
+
+        function getSelectedBleDevice() {
+            const select = document.getElementById('deviceSelect');
+            return bleScanResults.find(device => device.address === select.value) || null;
+        }
+
+        function renderBleDeviceOptions() {
+            const select = document.getElementById('deviceSelect');
+
+            select.innerHTML = '';
+            if (bleScanResults.length === 0) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = '未扫描到匹配设备';
+                select.appendChild(option);
+                setBleConnectionControls(isDeviceConnected());
+                if (!isDeviceConnected()) {
+                    document.getElementById('deviceSummary').innerText = '未扫描到匹配设备，请调整名称前缀后重试。';
+                }
+                return;
+            }
+
+            bleScanResults.forEach((device, index) => {
+                const option = document.createElement('option');
+                option.value = device.address;
+                const name = device.name || '(无名称)';
+                option.textContent = `${name} | ${device.address} | RSSI ${device.rssi}`;
+                if (index === 0) option.selected = true;
+                select.appendChild(option);
+            });
+
+            setBleConnectionControls(isDeviceConnected());
+        }
+
+        function setScanUiState(scanning) {
+            const scanButton = document.getElementById('scanDevices');
+            bleScanLoopActive = scanning;
+            scanButton.disabled = false;
+            scanButton.innerText = scanning ? '停止扫描' : '扫描设备';
+        }
+
+        function mergeBleScanResults(devices) {
+            if (!Array.isArray(devices)) return;
+            const deviceMap = new Map(bleScanResults.map(device => [device.address, device]));
+            devices.forEach(device => {
+                if (!device || !device.address) return;
+                deviceMap.set(device.address, device);
+            });
+            bleScanResults = Array.from(deviceMap.values()).sort((left, right) => {
+                if (left.rssi === right.rssi) {
+                    return left.address.localeCompare(right.address);
+                }
+                return right.rssi - left.rssi;
+            });
+        }
+
+        async function stopBleScanLoop() {
+            bleScanLoopActive = false;
+            bleScanLoopRunId += 1;
+            setScanUiState(false);
+        }
+
+        async function scanBleDevices() {
+            const prefixInput = document.getElementById('nameFilter');
+            const prefix = prefixInput.value.trim() || 'SATELLAI';
+            const state = await syncBleStateFromBackend();
+
+            if (state && state.connected) {
+                return;
+            }
+
+            if (bleScanLoopActive) {
+                await stopBleScanLoop();
+                setConnectionStatus('已停止扫描', '#6b7280');
+                return;
+            }
+
+            bleScanResults = [];
+            renderBleDeviceOptions();
+            setScanUiState(true);
+            setConnectionStatus('扫描中，列表会实时刷新...', '#2563eb');
+
+            const runId = ++bleScanLoopRunId;
+            while (bleScanLoopActive && runId === bleScanLoopRunId) {
+                try {
+                    const query = new URLSearchParams({
+                        prefix,
+                        timeout_ms: '1000'
+                    });
+                    const response = await bleApiRequest(`${bleApiBase}/scan?${query.toString()}`);
+                    if (runId !== bleScanLoopRunId || !bleScanLoopActive) {
+                        break;
+                    }
+                    mergeBleScanResults(response && response.devices);
+                    renderBleDeviceOptions();
+                    if (bleScanResults.length > 0) {
+                        setConnectionStatus(`扫描中: 已发现 ${bleScanResults.length} 台设备`, '#2563eb');
+                    }
+                } catch (error) {
+                    if (runId !== bleScanLoopRunId) {
+                        break;
+                    }
+                    if ((error.message || '').includes('扫描前请先断开当前设备')) {
+                        const refreshedState = await syncBleStateFromBackend();
+                        if (refreshedState && refreshedState.connected) {
+                            break;
+                        }
+                    }
+                    console.error('[ERROR] 蓝牙扫描失败:', error);
+                    setConnectionStatus(`扫描失败: ${error.message || error}`, 'red');
+                    break;
+                }
+            }
+
+            if (runId === bleScanLoopRunId) {
+                setScanUiState(false);
+                if (isDeviceConnected()) {
+                    return;
+                }
+                if (bleScanResults.length > 0) {
+                    setConnectionStatus(`扫描完成: ${bleScanResults.length} 台设备`, '#2563eb');
+                } else if (!document.getElementById('status').innerText.startsWith('扫描失败')) {
+                    setConnectionStatus('未扫描到设备', 'red');
+                }
+            }
+        }
+
+        function ensureBleEventSource() {
+            if (bleEventSource) return;
+
+            bleEventSource = new EventSource(`${bleApiBase}/events`);
+            bleEventSource.addEventListener('notification', event => {
+                try {
+                    peripheral.dispatchNotification(JSON.parse(event.data));
+                } catch (error) {
+                    console.error('[ERROR] 解析通知事件失败:', error);
+                }
+            });
+            bleEventSource.addEventListener('disconnected', event => {
+                try {
+                    peripheral.handleBackendDisconnect(JSON.parse(event.data));
+                } catch (error) {
+                    peripheral.handleBackendDisconnect(null);
+                }
+            });
+            bleEventSource.onerror = error => {
+                console.warn('[WARN] BLE 事件流异常，浏览器会自动重连。', error);
+            };
+        }
+
         class Peripheral {
             constructor() {
                 this.device = null;
+                this.notificationListeners = new Map();
+                this.notificationSubscriptions = new Set();
                 this.onDisconnected = this.onDisconnected.bind(this);
+                ensureBleEventSource();
             }
 
             async request() {
-                const filt = document.getElementById('nameFilter').value;
-                this.device = await navigator.bluetooth.requestDevice({
-                    // 'acceptAllDevices': true,
-                    // 'filters': [{ 'namePrefix': 'SATELLAI' }],
-                    'filters': [{ 'namePrefix': filt?filt:'SATELLAI' }],
-                    'optionalServices': [uuidSvcSatellai, uuidSvcNus]
-                });
-                if (!this.device) throw 'NO DEVICE SELECTED';
-                this.device.addEventListener('gattserverdisconnected', this.onDisconnected);
+                const selected = getSelectedBleDevice();
+                if (!selected) throw new Error('请先扫描并选择设备');
+                this.device = {
+                    address: selected.address,
+                    name: selected.name || selected.address,
+                    gatt: {
+                        connected: false
+                    }
+                };
             }
 
             async connect() {
-                await this.device.gatt.connect();
+                if (!this.device || !this.device.address) {
+                    throw new Error('请先扫描并选择设备');
+                }
+                const response = await bleApiRequest(`${bleApiBase}/connect`, {
+                    method: 'POST',
+                    body: JSON.stringify({ address: this.device.address })
+                });
+                const device = response && response.device ? response.device : this.device;
+                this.device = {
+                    address: device.address,
+                    name: device.name || this.device.name,
+                    gatt: {
+                        connected: true
+                    }
+                };
                 console.log('[INFO]CONNECTED');
-                const status = document.getElementById('status');
-                status.innerText = `已连接: ${this.device.name}`; status.style.color = 'green';
+                setConnectionStatus(`已连接 · ${formatConnectedDeviceLabel(this.device)}`, 'green');
+                setBleConnectionControls(true);
                 document.querySelectorAll('.cmd').forEach(btn => btn.disabled = false);
                 document.querySelectorAll('.rsp').forEach(lbl => lbl.innerText = '');
             }
 
             disconnect() {
-                this.device.gatt.disconnect();
-                this.device = null;
+                fetch(`${bleApiBase}/disconnect`, { method: 'POST' })
+                    .catch(error => console.warn('[WARN] 断开设备请求失败:', error))
+                    .finally(() => this.onDisconnected());
             }
 
             onDisconnected() {
                 console.log('[WARN]DISCONNECTED');
                 flushPendingAppResponse();
-                const status = document.getElementById('status');
-                status.innerText = '未连接'; status.style.color = 'red';
+                pendingCommands.forEach(commandInfo => {
+                    if (commandInfo.reject) {
+                        commandInfo.reject(new Error('设备已断开连接'));
+                    }
+                });
+                pendingCommands.clear();
+                setConnectionStatus('待连接', '#6b7280');
+                setBleConnectionControls(false);
                 document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
+                this.notificationListeners.clear();
+                this.notificationSubscriptions.clear();
                 this.device = null;
+            }
+
+            handleBackendDisconnect(payload) {
+                if (!this.device) {
+                    this.onDisconnected();
+                    return;
+                }
+                if (!payload || !payload.address || payload.address === this.device.address) {
+                    this.onDisconnected();
+                }
+            }
+
+            dispatchNotification(payload) {
+                const key = makeBleNotificationKey(payload.serviceUuid, payload.characteristicUuid);
+                const listeners = this.notificationListeners.get(key);
+                if (!listeners || listeners.size === 0) return;
+
+                const syntheticEvent = {
+                    target: {
+                        value: decodeBase64ToDataView(payload.data)
+                    }
+                };
+
+                listeners.forEach(listener => {
+                    try {
+                        listener(syntheticEvent);
+                    } catch (error) {
+                        console.error('[ERROR] 处理通知回调失败:', error);
+                    }
+                });
             }
 
             async sendCmd(svc, ch, data) {
                 if (!this.device || !this.device.gatt || !this.device.gatt.connected) {
                     throw new Error('设备未连接，无法发送指令');
                 }
-                if (typeof data === 'string') data = new TextEncoder().encode(data);
-                const service = await this.device.gatt.getPrimaryService(svc);
-                const characteristic = await service.getCharacteristic(ch);
-                await characteristic.writeValueWithoutResponse(data);
+                await bleApiRequest(`${bleApiBase}/write`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        serviceUuid: svc,
+                        characteristicUuid: ch,
+                        data: encodeBase64FromBytes(data)
+                    })
+                });
             }
 
             async startCmdNotifications(svc, ch, listener) {
                 if (!this.device || !this.device.gatt || !this.device.gatt.connected) {
                     throw new Error('设备未连接，无法订阅通知');
                 }
-                const service = await this.device.gatt.getPrimaryService(svc);
-                const characteristic = await service.getCharacteristic(ch);
-                await characteristic.startNotifications();
-                characteristic.addEventListener('characteristicvaluechanged', listener);
+                const key = makeBleNotificationKey(svc, ch);
+                if (!this.notificationListeners.has(key)) {
+                    this.notificationListeners.set(key, new Set());
+                }
+                this.notificationListeners.get(key).add(listener);
+
+                if (!this.notificationSubscriptions.has(key)) {
+                    await bleApiRequest(`${bleApiBase}/subscribe`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            serviceUuid: svc,
+                            characteristicUuid: ch
+                        })
+                    });
+                    this.notificationSubscriptions.add(key);
+                }
             }
 
             async stopCmdNotifications(svc, ch, listener) {
-                if (!this.device || !this.device.gatt || !this.device.gatt.connected) return;
-                const service = await this.device.gatt.getPrimaryService(svc);
-                const characteristic = await service.getCharacteristic(ch);
-                await characteristic.stopNotifications();
-                characteristic.removeEventListener('characteristicvaluechanged', listener);
+                const key = makeBleNotificationKey(svc, ch);
+                if (!this.notificationListeners.has(key)) return;
+                this.notificationListeners.get(key).delete(listener);
+                if (this.notificationListeners.get(key).size === 0) {
+                    this.notificationListeners.delete(key);
+                }
             }
         }
 
         const peripheral = new Peripheral();
+    resetBleConnectionState();
+    syncBleStateFromBackend();
 
         const wifiConstants = {
             stateMap: {
@@ -469,6 +865,12 @@
         const DEFAULT_APP_RESPONSE_TIMEOUT = 400;
         const DEFAULT_APP_RESPONSE_MAX_WAIT = 5000;
         let pendingAppResponse = null;
+        const pendingCommands = new Map();
+        let commandIdCounter = 0;
+
+        function generateCommandId() {
+            return `cmd_${++commandIdCounter}_${Date.now()}`;
+        }
 
         function isDeviceConnected() {
             return peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected;
@@ -490,21 +892,18 @@
             resolve(buffer);
         }
 
+        document.getElementById('scanDevices').addEventListener('click', async () => {
+            await scanBleDevices();
+        });
+
         document.getElementById('scanAndConnect').addEventListener('click', async event => {
             try {
+                if (bleScanLoopActive) {
+                    await stopBleScanLoop();
+                }
                 await peripheral.request();
                 await peripheral.connect();
-                
-        // 用于跟踪待处理命令的Map
-        const pendingCommands = new Map();
-        let commandIdCounter = 0;
-        
-        // 生成唯一命令ID
-        function generateCommandId() {
-            return `cmd_${++commandIdCounter}_${Date.now()}`;
-        }
-        
-        // 持续监听NUS服务的通知 - 显示所有接收到的数据
+
                 await peripheral.startCmdNotifications(uuidSvcNus, uuidCharNotify, event => {
                     const text = new TextDecoder().decode(event.target.value);
                     const lbl = document.getElementById('customCmdRsp');
@@ -596,12 +995,11 @@
                 
                 flushPendingAppResponse();
                 if (peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected) {
-                    try { peripheral.device.gatt.disconnect(); } catch (e) { console.warn(e); }
+                    try { await bleApiRequest(`${bleApiBase}/disconnect`, { method: 'POST' }); } catch (e) { console.warn(e); }
                 }
                 peripheral.device = null;
-                const status = document.getElementById('status');
-                status.innerText = '连接失败';
-                status.style.color = 'red';
+                setConnectionStatus('连接失败，请重试', 'red');
+                setBleConnectionControls(false);
                 document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
             }
         });
