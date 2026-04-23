@@ -13,9 +13,9 @@ import (
 )
 
 func main() {
-	rootDir, err := os.Getwd()
+	rootDir, err := determineRootDir()
 	if err != nil {
-		log.Fatalf("failed to determine working directory: %v", err)
+		log.Fatalf("failed to determine workspace directory: %v", err)
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -27,8 +27,11 @@ func main() {
 	addr := listener.Addr().String()
 	url := fmt.Sprintf("http://%s/index.html", addr)
 
-	fs := http.FileServer(http.Dir(rootDir))
-	handler := loggingMiddleware(fs)
+	bleManager := newBLEManager()
+	mux := http.NewServeMux()
+	bleManager.registerRoutes(mux)
+	mux.Handle("/", http.FileServer(http.Dir(rootDir)))
+	handler := loggingMiddleware(mux)
 
 	go func() {
 		// Give the server a brief moment to start accepting connections.
@@ -67,13 +70,27 @@ func openBrowser(target string) error {
 	}
 }
 
-func init() {
-	// Ensure relative paths resolve correctly when the executable is launched from elsewhere.
-	exePath, err := os.Executable()
-	if err != nil {
-		return
+func determineRootDir() (string, error) {
+	var candidates []string
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, cwd)
 	}
-	if err := os.Chdir(filepath.Dir(exePath)); err != nil {
-		log.Printf("[WARN] failed to switch working directory: %v", err)
+	if exePath, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Dir(exePath))
 	}
+
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(candidate, "index.html")); err == nil {
+			return candidate, nil
+		}
+	}
+
+	if len(candidates) > 0 && candidates[0] != "" {
+		return candidates[0], nil
+	}
+
+	return "", fmt.Errorf("unable to resolve a directory containing index.html")
 }
