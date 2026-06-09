@@ -2114,7 +2114,7 @@
 
         async function handleNtnEnterOnlyMode() {
             setNtnMessage('正在进入仅卫星通讯模式...', '#2563eb');
-            const payload = await sendNtnCommand({ c: 'pm.mode', p: 5 }, 'pm.mode');
+            const payload = await sendNtnCommand({ c: 'pm.mode', p: { m: 5 } }, 'pm.mode');
             if (payload && payload.e === undefined) setNtnMessage('已发送进入仅卫星通讯模式命令，等待 NTN 状态事件或查询结果。', '#16a34a');
         }
 
