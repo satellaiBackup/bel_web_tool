@@ -404,6 +404,28 @@
         let bleEventSource = null;
         let bleScanLoopActive = false;
         let bleScanLoopRunId = 0;
+        const BLE_NAME_FILTER_STORAGE_KEY = 'ble_web_tool.name_filter';
+
+        function loadSavedNameFilter() {
+            const input = document.getElementById('nameFilter');
+            if (!input) return;
+            try {
+                const saved = localStorage.getItem(BLE_NAME_FILTER_STORAGE_KEY);
+                if (saved !== null) {
+                    input.value = saved;
+                }
+            } catch (error) {
+                console.warn('[WARN] Failed to load BLE name filter:', error);
+            }
+        }
+
+        function saveNameFilter(value) {
+            try {
+                localStorage.setItem(BLE_NAME_FILTER_STORAGE_KEY, value || '');
+            } catch (error) {
+                console.warn('[WARN] Failed to save BLE name filter:', error);
+            }
+        }
 
         function normalizeBleUuid(uuid) {
             return String(uuid || '').trim().toLowerCase();
@@ -578,6 +600,7 @@
 
         function renderBleDeviceOptions() {
             const select = document.getElementById('deviceSelect');
+            const selectedAddress = select.value;
 
             select.innerHTML = '';
             if (bleScanResults.length === 0) {
@@ -597,7 +620,7 @@
                 option.value = device.address;
                 const name = device.name || '(无名称)';
                 option.textContent = `${name} | ${device.address} | RSSI ${device.rssi}`;
-                if (index === 0) option.selected = true;
+                if (selectedAddress ? device.address === selectedAddress : index === 0) option.selected = true;
                 select.appendChild(option);
             });
 
@@ -635,6 +658,7 @@
         async function scanBleDevices() {
             const prefixInput = document.getElementById('nameFilter');
             const prefix = prefixInput.value.trim() || 'SATELLAI';
+            saveNameFilter(prefixInput.value.trim());
             const state = await syncBleStateFromBackend();
 
             if (state && state.connected) {
@@ -864,6 +888,10 @@
         }
 
         const peripheral = new Peripheral();
+    loadSavedNameFilter();
+    document.getElementById('nameFilter').addEventListener('input', event => {
+        saveNameFilter(event.target.value.trim());
+    });
     resetBleConnectionState();
     syncBleStateFromBackend();
 
