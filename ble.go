@@ -17,11 +17,12 @@ import (
 )
 
 const (
-	defaultBLEScanTimeout = 4 * time.Second
-	maxBLEScanTimeout     = 15 * time.Second
-	sseKeepAliveInterval  = 20 * time.Second
-	bleDiscoveryAttempts  = 4
-	bleDiscoveryBackoff   = 350 * time.Millisecond
+	defaultBLEScanTimeout   = 4 * time.Second
+	maxBLEScanTimeout       = 15 * time.Second
+	sseKeepAliveInterval    = 20 * time.Second
+	bleDiscoveryAttempts    = 4
+	bleDiscoveryBackoff     = 350 * time.Millisecond
+	bleConnectionReadyDelay = 1200 * time.Millisecond
 )
 
 type bleManager struct {
@@ -47,9 +48,10 @@ type bleScanState struct {
 }
 
 type bleConnection struct {
-	address string
-	name    string
-	device  bluetooth.Device
+	address     string
+	name        string
+	device      bluetooth.Device
+	connectedAt time.Time
 
 	opMu        sync.Mutex
 	charCache   map[string]bluetooth.DeviceCharacteristic
@@ -601,6 +603,7 @@ func (m *bleManager) connect(address string) (bleDeviceInfo, error) {
 		address:     info.Address,
 		name:        info.Name,
 		device:      device,
+		connectedAt: time.Now(),
 		charCache:   make(map[string]bluetooth.DeviceCharacteristic),
 		notifyState: make(map[string]bool),
 	}
@@ -656,6 +659,9 @@ func (m *bleManager) writeCharacteristic(serviceUUID, characteristicUUID string,
 	if err != nil {
 		return err
 	}
+	if err := m.waitForConnectionReady(conn); err != nil {
+		return err
+	}
 
 	conn.opMu.Lock()
 	defer conn.opMu.Unlock()
@@ -678,6 +684,9 @@ func (m *bleManager) writeCharacteristic(serviceUUID, characteristicUUID string,
 func (m *bleManager) enableNotifications(serviceUUID, characteristicUUID string) error {
 	conn, err := m.requireConnection()
 	if err != nil {
+		return err
+	}
+	if err := m.waitForConnectionReady(conn); err != nil {
 		return err
 	}
 
@@ -728,6 +737,24 @@ func (m *bleManager) requireConnection() (*bleConnection, error) {
 		return nil, errors.New("当前没有已连接设备")
 	}
 	return conn, nil
+}
+
+func (m *bleManager) waitForConnectionReady(conn *bleConnection) error {
+	if conn == nil {
+		return errors.New("no active BLE connection")
+	}
+
+	if remaining := bleConnectionReadyDelay - time.Since(conn.connectedAt); remaining > 0 {
+		time.Sleep(remaining)
+	}
+
+	m.mu.Lock()
+	current := m.connection
+	m.mu.Unlock()
+	if current != conn {
+		return errors.New("BLE connection changed, please reconnect")
+	}
+	return nil
 }
 
 func (m *bleManager) getCharacteristicLocked(conn *bleConnection, serviceUUID, characteristicUUID string) (bluetooth.DeviceCharacteristic, string, error) {
