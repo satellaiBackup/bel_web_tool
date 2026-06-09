@@ -2023,6 +2023,19 @@
             9: 'BUSY'
         };
 
+        const ntnStateTextMap = {
+            0: '空闲',
+            1: '上电/唤醒中',
+            2: '注网中',
+            3: '已注网，可发送',
+            4: '发送中',
+            5: '等待下行/响应',
+            6: '会话完成',
+            7: '会话失败',
+            8: '配额/频率限制',
+            9: '会话忙'
+        };
+
         const ntnSmsTxStateMap = {
             0: 'ACCEPTED',
             1: 'SENT',
@@ -2047,10 +2060,16 @@
             if (el) el.textContent = text;
         }
 
+        function formatNtnState(state) {
+            const name = ntnStateMap[state] || 'UNKNOWN';
+            const text = ntnStateTextMap[state] || '未知状态';
+            return `${state} (${name} / ${text})`;
+        }
+
         function renderNtnStatus(data) {
             if (!data || typeof data !== 'object') return;
             if (data.mode !== undefined) setTextById('ntnModeValue', `${data.mode}${data.mode === 5 ? ' (NTN_ONLY)' : ''}`);
-            if (data.state !== undefined) setTextById('ntnStateValue', `${data.state} (${ntnStateMap[data.state] || 'UNKNOWN'})`);
+            if (data.state !== undefined) setTextById('ntnStateValue', formatNtnState(data.state));
             if (data.ready !== undefined) setTextById('ntnReadyValue', data.ready ? '1 (READY)' : '0 (NOT READY)');
             if (data.err !== undefined) setTextById('ntnErrValue', data.err);
         }
@@ -2069,7 +2088,7 @@
             if (eventData.e === 'ntn_state') {
                 renderNtnStatus(eventData);
                 const ready = eventData.ready ? 'ready' : 'not ready';
-                const state = ntnStateMap[eventData.state] || 'UNKNOWN';
+                const state = formatNtnState(eventData.state);
                 setNtnMessage(`NTN ${state}, ${ready}, err=${eventData.err ?? 0}`, eventData.ready ? '#16a34a' : '#2563eb');
                 return;
             }
