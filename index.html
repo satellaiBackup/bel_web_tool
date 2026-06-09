@@ -464,7 +464,7 @@
             }
         }
 
-        function applySyncedBleConnectionState(device) {
+        async function applySyncedBleConnectionState(device) {
             if (!device || !device.address) {
                 return;
             }
@@ -479,7 +479,14 @@
 
             setConnectionStatus(`已连接 · ${formatConnectedDeviceLabel(peripheral.device)}`, 'green');
             setBleConnectionControls(true);
-            document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
+            try {
+                await startDefaultBleNotifications();
+                document.querySelectorAll('.cmd').forEach(btn => btn.disabled = false);
+            } catch (error) {
+                console.error('[ERROR] Failed to restore BLE notifications:', error);
+                setConnectionStatus('已连接，但通知恢复失败，请重新连接', 'red');
+                document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
+            }
         }
 
         function resetBleConnectionState() {
@@ -495,7 +502,7 @@
             try {
                 const state = await bleApiRequest(`${bleApiBase}/state`);
                 if (state && state.connected && state.device) {
-                    applySyncedBleConnectionState(state.device);
+                    await applySyncedBleConnectionState(state.device);
                     return state;
                 }
 
@@ -942,6 +949,83 @@
             if (overallTimer) clearTimeout(overallTimer);
             pendingAppResponse = null;
             resolve(buffer);
+        }
+
+        async function startDefaultBleNotifications() {
+            peripheral.notificationListeners.clear();
+            peripheral.notificationSubscriptions.clear();
+
+            await peripheral.startCmdNotifications(uuidSvcNus, uuidCharNotify, event => {
+                const text = new TextDecoder().decode(event.target.value);
+                const lbl = document.getElementById('customCmdRsp');
+                if (lbl) {
+                    appendLog(lbl, text, '>');
+                    lbl.scrollTop = lbl.scrollHeight;
+                }
+
+                if (pendingCommands.size > 0) {
+                    const [commandId, commandInfo] = pendingCommands.entries().next().value;
+                    commandInfo.response += text;
+                    commandInfo.lastActivityTime = Date.now();
+
+                    if (commandInfo.response.endsWith('OK\r\n') || commandInfo.response.endsWith('ERROR\r\n')) {
+                        if (commandInfo.resolve) {
+                            commandInfo.resolve(commandInfo.response);
+                        }
+                        pendingCommands.delete(commandId);
+                    }
+                }
+            });
+
+            await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharApp, event => {
+                const text = new TextDecoder().decode(event.target.value);
+
+                const appLbl = document.getElementById('appCmdRspLog');
+                if (appLbl) {
+                    appendLog(appLbl, text, '>');
+                    appLbl.scrollTop = appLbl.scrollHeight;
+                }
+
+                try {
+                    const responses = parseMultipleJsonResponses(text);
+                    responses.forEach(response => {
+                        if (response.e !== undefined) {
+                            const eventLbl = document.getElementById('eventMessagesLog');
+                            if (eventLbl) {
+                                appendLog(eventLbl, JSON.stringify(response), '>');
+                                eventLbl.scrollTop = eventLbl.scrollHeight;
+                            }
+
+                            if (response.e === 'wifi-scan') {
+                                handleWifiScanEvent(response);
+                            }
+
+                            if (response.e === 'ntn_state' || response.e === 'ntn_sms_tx' || response.e === 'ntn_sms_rx') {
+                                handleNtnEvent(response);
+                            }
+                        }
+                    });
+                } catch (error) {
+                    console.debug('解析事件失败:', error);
+                }
+
+                if (pendingAppResponse) {
+                    pendingAppResponse.buffer += text;
+                    if (pendingAppResponse.inactivityTimer) clearTimeout(pendingAppResponse.inactivityTimer);
+                    pendingAppResponse.inactivityTimer = setTimeout(() => {
+                        flushPendingAppResponse();
+                    }, pendingAppResponse.inactivityMs);
+                }
+            });
+
+            await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharDfu, event => {
+                if (resolveDfu) {
+                    resolveDfu(event.target.value);
+                    resolveDfu = null;
+                } else {
+                    console.warn(event.target.value);
+                }
+            });
         }
 
         document.getElementById('scanDevices').addEventListener('click', async () => {
