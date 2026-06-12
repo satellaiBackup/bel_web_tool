@@ -1,0 +1,20 @@
+{
+  "id": "ble-web-tool",
+  "name": "蓝牙网页调试助手",
+  "shortName": "BLE Tool",
+  "host": "127.0.0.1",
+  "port": "51888",
+  "startPage": "index.html",
+  "staticDir": "web",
+  "manifestPath": "site.webmanifest",
+  "iconPath": "web/assets/app.ico",
+  "probePath": "/api/app-info",
+  "probeHeader": "X-Local-Web-App",
+  "probeValue": "ble-web-tool",
+  "windowClassName": "BleWebToolTrayWindow",
+  "windowTitle": "BLE Web Tool",
+  "trayTooltip": "BLE 网页调试助手",
+  "openMenuText": "打开界面",
+  "exitMenuText": "退出",
+  "autoOpenBrowser": true
+}

@@ -1,0 +1,551 @@
+
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no, width=device-width">
+    <link rel="icon" href="./assets/app.ico" sizes="any">
+    <link rel="icon" type="image/png" href="./assets/favicon-32.png" sizes="32x32">
+    <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png">
+    <link rel="manifest" href="./site.webmanifest">
+    <meta name="theme-color" content="#06224a">
+    <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden; /* 防止父页面滚动条在模态框显示时出现 */
+    }
+
+    /* 模态框容器样式 */
+    #fenceEditorModal {
+        display: flex; /* 使用flex实现内容居中 */
+        align-items: center;
+        justify-content: center;
+        position: fixed; /* 固定定位，覆盖整个父窗口 */
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5); /* 半透明遮罩 */
+        z-index: 1000; /* 确保在顶层 */
+    }
+
+    /* 模态框内容区域 */
+    .modal-content-wrapper {
+        background-color: #fefefe;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        width: 90%; /* 响应式宽度 */
+        max-width: 800px; /* 最大宽度 */
+        height: 90%; /* 响应式高度 */
+        max-height: 700px; /* 最大高度 */
+        display: flex;
+        flex-direction: column; /* 内部元素垂直排列 */
+        position: relative; /* 为了关闭按钮的绝对定位 */
+    }
+
+    #closeModalBtn {
+        position: absolute;
+        top: 10px;
+        right: 15px;
+        font-size: 24px;
+        font-weight: bold;
+        color: #888;
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 5px;
+        line-height: 1;
+    }
+    #closeModalBtn:hover {
+        color: #000;
+    }
+
+    #container {
+      width: 100%;
+      flex-grow: 1; /* 地图区域占据剩余空间 */
+      min-height: 200px; /* 保证地图有最小高度 */
+      border: 1px solid #ccc; /* 可选：给地图加个边框 */
+    }
+
+    .input-card {
+        /* 从fixed改为相对定位或静态定位，因为它现在是模态框内容的一部分 */
+        /* position: static; */ 
+        background-color: white;
+        padding: 10px;
+        border-radius: 4px;
+        /* box-shadow: 0 2px 6px 0 rgba(114, 124, 245, .5); */ /* 可选，模态框已有阴影 */
+        /* z-index: 10; */ /* 在模态框内，通常不需要高z-index */
+        width: auto; /* 宽度自适应内容，或设置百分比 */
+        margin-top: 10px; /* 与地图的间距 */
+        display: flex; /* 让内部元素更好地排列 */
+        flex-wrap: wrap; /* 允许换行 */
+        gap: 5px; /* 元素间距 */
+        align-items: flex-start; /* 顶部对齐 */
+        max-height: 250px; /* 限制控制面板高度，超出可滚动 */
+        overflow-y: auto;
+    }
+    .input-card > div, .input-card > h4, .input-card > button, .input-card > textarea {
+        width: 100%; /* 让标题、文本区域等占满一行 */
+    }
+    .input-card .btn-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        width: 100%;
+    }
+    .input-card .btn {
+        /* display: block; */ /* 改为flex item */
+        /* width: 100%; */
+        padding: 8px 10px;
+        text-align: center;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        flex-grow: 1; /* 按钮平均分配空间 */
+    }
+    .input-card .btn:hover {
+        background-color: #0056b3;
+    }
+    .input-card .btn.submit-btn {
+        background-color: #28a745; 
+    }
+    .input-card .btn.submit-btn:hover {
+        background-color: #1e7e34;
+    }
+     .input-card .btn.clear-btn {
+        background-color: #dc3545;
+    }
+    .input-card .btn.clear-btn:hover {
+        background-color: #c82333;
+    }
+
+    #coordinatesOutput {
+        width: calc(100% - 12px); 
+        height: 80px; 
+        margin-top: 5px;
+        font-family: monospace;
+        font-size: 11px; 
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        resize: vertical;
+    }
+    #previewTableContainer {
+        margin-top: 5px;
+        font-size: 12px;
+        max-height: 100px; 
+        overflow-y: auto; 
+        border: 1px solid #eee;
+        padding: 5px;
+        width: calc(100% - 12px);
+    }
+    #previewTableContainer table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    #previewTableContainer th, #previewTableContainer td {
+        border: 1px solid #ddd;
+        padding: 4px;
+        text-align: left;
+        word-break: break-all;
+    }
+    #previewTableContainer th {
+        background-color: #f8f8f8;
+    }
+    .input-column {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        flex-basis: 220px; /* 每个column的基础宽度 */
+        flex-grow: 1;
+    }
+    </style>
+    <title>围栏编辑器 (模态框)</title>
+    <script src="https://webapi.amap.com/maps?v=2.0&key=7d85ff33aabb204519ebeac3dd8d9035&plugin=AMap.MouseTool,AMap.PolygonEditor,AMap.CircleEditor,AMap.RectangleEditor"></script>
+    </head>
+<body>
+
+<div id="fenceEditorModal">
+    <div class="modal-content-wrapper">
+        <button id="closeModalBtn" title="关闭编辑器" onclick="closeEditorModal()">&times;</button>
+        <h3 style="text-align: center; margin-top:0; margin-bottom:15px;">围栏编辑器</h3>
+        
+        <div id="container"></div>
+
+        <div class="input-card">
+            <div class="input-column">
+                <h4 style="margin-bottom: 5px; font-weight: 600">1. 绘制覆盖物</h4>
+                <div class="btn-group">
+                    <button class="btn" onclick="drawPolygon()">多边形</button> 
+                    <button class="btn" onclick="drawRectangle()">矩形</button> 
+                    <button class="btn" onclick="drawCircle()">圆形</button>
+                </div>
+                <button class="btn clear-btn" onclick="clearAll()">清除所有</button>
+            </div>
+
+            <div class="input-column">
+                <h4 style="margin-bottom: 5px; font-weight: 600">2. 数据预览</h4>
+                <div id="previewTableContainer">请先绘制一个图形...</div>
+            </div>
+
+            <div class="input-column">
+                <h4 style="margin-bottom: 5px; font-weight: 600">3. 提交</h4>
+                 <button class="btn submit-btn" onclick="handleSubmitData()">发送到设备</button>
+                <textarea id="coordinatesOutput" readonly placeholder="格式化JSON将显示在此..."></textarea>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="text/javascript">
+    function safeCallParent(fnName, payload) {
+        try {
+            if (window.parent && window.parent !== window) {
+                const fn = window.parent[fnName];
+                if (typeof fn === 'function') {
+                    fn(payload);
+                    return true;
+                }
+            }
+        } catch (error) {
+            console.warn(`无法直接调用父页面函数 ${fnName}:`, error);
+        }
+        return false;
+    }
+
+    function notifyParent(type, payload = {}) {
+        try {
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({ source: 'gps-editor', type, payload }, '*');
+            }
+        } catch (error) {
+            console.warn('无法向父页面发送消息:', error);
+        }
+    }
+
+    var map = null;
+    var mouseTool = null;
+    var drawnOverlays = [];
+    var currentDrawnShapeData = null;
+    var finalOutput = null;
+    var mapReady = false;
+
+    var coordinatesOutput = document.getElementById('coordinatesOutput');
+    var previewTableContainer = document.getElementById('previewTableContainer');
+    var fenceEditorModal = document.getElementById('fenceEditorModal');
+    var mapContainer = document.getElementById('container');
+
+    if (typeof AMap !== 'undefined') {
+        map = new AMap.Map("container", {
+            center: [113.952597,22.539266],
+            zoom: 16,
+            resizeEnable: true 
+        });
+        mouseTool = new AMap.MouseTool(map);
+        mapReady = true;
+    } else {
+        mapReady = false;
+        console.error('AMap SDK 未能加载。请通过本地服务器 (http://localhost) 访问页面。');
+        if (mapContainer) {
+            mapContainer.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#b91c1c;font-weight:600;">地图加载失败，请通过本地服务器访问页面 (例如使用 live-server)。</div>';
+        }
+        notifyParent('log', 'AMap SDK 未加载，地图功能将不可用。');
+    }
+
+    function ensureMapReady() {
+        if (mapReady && map && mouseTool) return true;
+        console.warn('地图尚未初始化，无法执行该操作。');
+        alert('地图尚未初始化，无法执行该操作。请确认通过本地服务器访问页面。');
+        return false;
+    }
+
+    window.addEventListener('message', function(event) {
+        const data = event.data;
+        if (!data || data.source !== 'index-parent') return;
+        if (data.type === 'open-editor') {
+            openEditorModal();
+        } else if (data.type === 'close-editor') {
+            closeEditorModal();
+        }
+    });
+
+
+    // --- 坐标转换常量和函数 (GCJ-02 to WGS-84) ---
+    const x_PI = 3.14159265358979324 * 3000.0 / 180.0;
+    const PI = 3.1415926535897932384626;
+    const a = 6378245.0; // 克拉索夫斯基椭球长半轴
+    const ee = 0.00669342162296594323; // 椭球偏心率的平方
+
+    /**
+     * 判断是否在国内，不在国内则不做偏移
+     * @param lng
+     * @param lat
+     * @returns {boolean}
+     */
+    function out_of_china(lng, lat) {
+        return !(lng > 73.66 && lng < 135.05 && lat > 3.86 && lat < 53.55);
+    }
+
+    function transformlat(lng, lat) {
+        let ret = -100.0 + 2.0 * lng + 3.0 * lat + 0.2 * lat * lat + 0.1 * lng * lat + 0.2 * Math.sqrt(Math.abs(lng));
+        ret += (20.0 * Math.sin(6.0 * lng * PI) + 20.0 * Math.sin(2.0 * lng * PI)) * 2.0 / 3.0;
+        ret += (20.0 * Math.sin(lat * PI) + 40.0 * Math.sin(lat / 3.0 * PI)) * 2.0 / 3.0;
+        ret += (160.0 * Math.sin(lat / 12.0 * PI) + 320 * Math.sin(lat * PI / 30.0)) * 2.0 / 3.0;
+        return ret;
+    }
+
+    function transformlng(lng, lat) {
+        let ret = 300.0 + lng + 2.0 * lat + 0.1 * lng * lng + 0.1 * lng * lat + 0.1 * Math.sqrt(Math.abs(lng));
+        ret += (20.0 * Math.sin(6.0 * lng * PI) + 20.0 * Math.sin(2.0 * lng * PI)) * 2.0 / 3.0;
+        ret += (20.0 * Math.sin(lng * PI) + 40.0 * Math.sin(lng / 3.0 * PI)) * 2.0 / 3.0;
+        ret += (150.0 * Math.sin(lng / 12.0 * PI) + 300.0 * Math.sin(lng / 30.0 * PI)) * 2.0 / 3.0;
+        return ret;
+    }
+
+    /**
+     * GCJ02 转换为 WGS84
+     * @param {number} lng 火星坐标系经度
+     * @param {number} lat 火星坐标系纬度
+     * @returns {Array<number>} WGS84坐标系经纬度数组 [lng, lat]
+     */
+    function gcj02towgs84(lng, lat) {
+        if (out_of_china(lng, lat)) {
+            return [lng, lat];
+        }
+        let dlat = transformlat(lng - 105.0, lat - 35.0);
+        let dlng = transformlng(lng - 105.0, lat - 35.0);
+        const radlat = lat / 180.0 * PI;
+        let magic = Math.sin(radlat);
+        magic = 1 - ee * magic * magic;
+        const sqrtmagic = Math.sqrt(magic);
+        dlat = (dlat * 180.0) / ((a * (1 - ee)) / (magic * sqrtmagic) * PI);
+        dlng = (dlng * 180.0) / (a / sqrtmagic * Math.cos(radlat) * PI);
+        const mglat = lat + dlat;
+        const mglng = lng + dlng;
+        return [lng * 2 - mglng, lat * 2 - mglat];
+    }
+    // --- 坐标转换函数结束 ---
+
+
+    // 父页面可以调用此函数来重置编辑器状态（如果需要）
+    function resetEditor() {
+        clearAll();
+        updatePreviewMessage("请先绘制一个图形...");
+        coordinatesOutput.value = "";
+        console.log("编辑器已重置。");
+    }
+
+    function openEditorModal() { // 由父页面调用来显示模态框
+        if (fenceEditorModal) fenceEditorModal.style.display = 'flex';
+        // 可能需要重新调整地图大小，如果它在隐藏时初始化
+        if (mapReady && map && typeof map.resize === 'function') map.resize();
+    }
+
+    function closeEditorModal() { // 用于关闭按钮和提交后
+        if (!fenceEditorModal) return;
+        const wasVisible = fenceEditorModal.style.display !== 'none';
+        fenceEditorModal.style.display = 'none';
+        if (!wasVisible) return;
+        if (!safeCallParent('editorModalClosed')) {
+            notifyParent('editorModalClosed');
+        }
+    }
+
+
+    function updatePreviewMessage(message) {
+        previewTableContainer.innerHTML = `<p style="color: #777; margin:0;">${message}</p>`;
+    }
+
+    function drawPolygon () {
+        if (!ensureMapReady()) return;
+      mouseTool.polygon({
+        strokeColor: "#FF33FF", strokeOpacity: 0.8, strokeWeight: 6,
+        fillColor: '#1791fc', fillOpacity: 0.3, strokeStyle: "solid",
+      });
+      updatePreviewMessage("正在绘制多边形...");
+      coordinatesOutput.value = "";
+      currentDrawnShapeData = null;
+    }
+
+    function drawRectangle () {
+        if (!ensureMapReady()) return;
+      mouseTool.rectangle({
+        strokeColor:'red', strokeOpacity:0.8, strokeWeight: 6,
+        fillColor:'blue', fillOpacity:0.3, strokeStyle: 'solid',
+      });
+      updatePreviewMessage("正在绘制矩形...");
+      coordinatesOutput.value = "";
+      currentDrawnShapeData = null;
+    }
+
+    function drawCircle () {
+        if (!ensureMapReady()) return;
+      mouseTool.circle({
+        strokeColor: "#008000", strokeOpacity: 1, strokeWeight: 6,
+        fillColor: '#5cb85c', fillOpacity: 0.3, strokeStyle: 'solid',
+      });
+      updatePreviewMessage("正在绘制圆形...");
+      coordinatesOutput.value = "";
+      currentDrawnShapeData = null;
+    }
+    
+    function clearAll() {
+        if (mouseTool) mouseTool.close(true); 
+        if (map && drawnOverlays.length > 0) {
+            map.remove(drawnOverlays);
+            drawnOverlays = [];
+        }
+        updatePreviewMessage("所有覆盖物已清除。请重新绘制。");
+        coordinatesOutput.value = "";
+        currentDrawnShapeData = null;
+        console.log("所有覆盖物已清除。");
+    }
+
+    function displayPreviewInTable(shapeData) {
+        if (!shapeData) {
+            updatePreviewMessage("没有数据可预览。");
+            return;
+        }
+        let tableHTML = '<table><thead><tr><th>属性</th><th>值</th></tr></thead><tbody>';
+        tableHTML += `<tr><td>类型 (GCJ02)</td><td>${shapeData.className || 'N/A'}</td></tr>`;
+        if (shapeData.path) { // 原始 GCJ02 路径
+            tableHTML += `<tr><td>坐标点数量</td><td>${shapeData.path.length}</td></tr>`;
+            shapeData.path.forEach((point, index) => {
+                tableHTML += `<tr><td>点 ${index + 1} (GCJ02)</td><td>[${point[0].toFixed(6)}, ${point[1].toFixed(6)}]</td></tr>`;
+            });
+        } else if (shapeData.center && typeof shapeData.radius !== 'undefined') { // 原始 GCJ02 圆心
+            tableHTML += `<tr><td>圆心 (GCJ02)</td><td>[${shapeData.center[0].toFixed(6)}, ${shapeData.center[1].toFixed(6)}]</td></tr>`;
+            tableHTML += `<tr><td>半径</td><td>${shapeData.radius.toFixed(2)} 米</td></tr>`;
+        }
+        tableHTML += '</tbody></table>';
+        previewTableContainer.innerHTML = tableHTML;
+    }
+
+    if (mouseTool) {
+        mouseTool.on('draw', function(event) {
+      var drawnObject = event.obj;
+      drawnOverlays.push(drawnObject); 
+      var className = drawnObject.CLASS_NAME; 
+      let rawData = { className: className };
+      console.log('覆盖物对象绘制完成，实际类型:', className); 
+      
+      if (className === 'Overlay.Polyline' || className === 'Overlay.Polygon' || className === 'Overlay.Rectangle') {
+            var path = drawnObject.getPath(); 
+            rawData.path = path.map(lngLat => [lngLat.lng, lngLat.lat]);
+      } else if (className === 'Overlay.Circle') {
+            var center = drawnObject.getCenter(); 
+            var radius = drawnObject.getRadius(); 
+            rawData.center = [center.lng, center.lat];
+            rawData.radius = radius;
+      } else {
+            console.warn("观察到的 className 不是 Overlay.xxx，尝试使用 AMap.xxx 判断。实际 className: " + className);
+            if (className === 'AMap.Polyline' || className === 'AMap.Polygon' || className === 'AMap.Rectangle') {
+                var pathFallback = drawnObject.getPath();
+                rawData.path = pathFallback.map(lngLat => [lngLat.lng, lngLat.lat]);
+                rawData.className = className; 
+            } else if (className === 'AMap.Circle') {
+                var centerFallback = drawnObject.getCenter();
+                var radiusFallback = drawnObject.getRadius();
+                rawData.center = [centerFallback.lng, centerFallback.lat];
+                rawData.radius = radiusFallback;
+                rawData.className = className; 
+            } else {
+                console.error("未知的覆盖物类型，无法提取详细数据。实际 className: " + className);
+                updatePreviewMessage(`绘制完成: ${className} (无法解析)`);
+                currentDrawnShapeData = null; 
+                return;
+            }
+        }
+        currentDrawnShapeData = rawData; 
+        displayPreviewInTable(currentDrawnShapeData); 
+        coordinatesOutput.value = ""; 
+        updataJsonData()
+    });
+    }
+
+    function updataJsonData() {
+        if (!currentDrawnShapeData) {
+            alert("没有可提交的数据。请先绘制一个图形。");
+            coordinatesOutput.value = "错误: 没有可提交的数据。";
+            return;
+        }
+
+        finalOutput = {
+            c: "fa",
+            p: { id: `f-${Math.floor(Date.now() / 1000 % 100000000 )}` }
+        };
+        const data = currentDrawnShapeData;
+
+        if (data.className === 'Overlay.Polygon' || data.className === 'Overlay.Polyline' || data.className === 'Overlay.Rectangle' ||
+            data.className === 'AMap.Polygon' || data.className === 'AMap.Polyline' || data.className === 'AMap.Rectangle') {
+            if (data.path && data.path.length > 0) {
+                let flattenedPath = [];
+                data.path.forEach(point => {
+                    const wgs84Point = gcj02towgs84(point[0], point[1]);
+                    flattenedPath.push(wgs84Point[1]); // lat WGS84
+                    flattenedPath.push(wgs84Point[0]); // lng WGS84
+                });
+                if (!finalOutput.p.fp) finalOutput.p.fp = [];
+                finalOutput.p.fp.push({ type: 1, p: flattenedPath });
+            } else {
+                handleSubmissionError("错误: 路径数据为空。"); return;
+            }
+        } else if (data.className === 'Overlay.Circle' || data.className === 'AMap.Circle') {
+            if (data.center && typeof data.radius !== 'undefined') {
+                const centerWGS84 = gcj02towgs84(data.center[0], data.center[1]);
+                const centerLatLng = [centerWGS84[1], centerWGS84[0]]; // 先纬度后经度
+                if (!finalOutput.p.fn) finalOutput.p.fn = [];
+                finalOutput.p.fn.push({ type: 0, center: centerLatLng, radius: data.radius });
+            } else {
+                handleSubmissionError("错误: 圆形数据不完整。"); return;
+            }
+        } else {
+            handleSubmissionError("错误: 未知图形类型。实际类型: " + data.className); return;
+        }
+
+        coordinatesOutput.value = JSON.stringify(finalOutput); 
+        console.log("格式化提交的数据 (最小尺寸):", finalOutput);
+    }
+
+
+function handleSubmitData() {
+        if (!finalOutput) {
+            alert("没有可提交的数据。请先绘制一个图形。");
+            coordinatesOutput.value = "错误: 没有可提交的数据。";
+            return;
+        }
+        console.log("使用已转换的WGS-84数据...");
+
+        // 直接使用已经转换好的finalOutput数据
+        coordinatesOutput.value = JSON.stringify(finalOutput); 
+        console.log("格式化提交的数据 (WGS-84):", finalOutput);
+
+        if (safeCallParent('receiveAmapFenceData', finalOutput)) {
+            console.log("数据已通过直接调用发送到父页面。");
+        } else {
+            notifyParent('fence-data', finalOutput);
+            console.log("已通过 postMessage 将数据发送给父页面。");
+        }
+    }
+
+    function handleSubmissionError(message) {
+        console.error(message.replace("错误: ", ""));
+        alert(message);
+        coordinatesOutput.value = message;
+    }
+
+    // 当此页面作为iframe加载时，父页面可能希望在显示它之前重置状态
+    // window.onload = function() {
+    //   resetEditor(); // 或根据父页面的指令决定是否重置
+    // };
+
+    notifyParent('editor-ready', { mapReady: mapReady });
+</script>
+</body>
+</html>

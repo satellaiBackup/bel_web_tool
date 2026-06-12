@@ -1,0 +1,102 @@
+# 本地 Web 软件通用框架
+
+项目现在按文件夹管理成“通用外壳 + 可替换业务 + 静态网页资源”。
+
+## 目录结构
+
+```text
+.
+├─ main.go                         # 应用入口，只负责装配框架和业务
+├─ business_ble.go                 # 当前业务接入点
+├─ app.config.json                 # 应用配置
+├─ internal/
+│  ├─ framework/                   # 通用本地软件外壳
+│  └─ business/
+│     └─ ble/                      # 当前 BLE 业务 API
+├─ web/                            # 前端页面和网页资源
+│  ├─ index.html
+│  ├─ gps.html
+│  ├─ site.webmanifest
+│  └─ assets/
+└─ scripts/
+   └─ build_gui.ps1                # Windows GUI 构建脚本
+```
+
+## 各层职责
+
+`internal/framework` 是通用框架层，和业务无关。它负责：
+
+- 固定端口和本地 HTTP 服务
+- 单实例探测和“程序已打开”提示
+- 自动打开浏览器
+- Windows 托盘图标、右键菜单、退出
+- 静态资源服务
+- `site.webmanifest` 的正确 MIME 类型
+- Windows GUI 模式下的弹窗提示
+
+`internal/business/ble` 是当前 BLE 业务层。它只负责：
+
+- BLE 扫描
+- 连接和断开
+- 写入特征
+- SSE 通知转发
+- 注册 `/api/ble/*` 路由
+
+`web` 是前端资源层。这里放 HTML、JS、manifest 和图标资源。
+
+`scripts` 是工程脚本层。当前只有 Windows GUI 构建脚本。
+
+## 新软件怎么复用
+
+做一个新类型的软件时，通常只动这些地方：
+
+1. 复制项目骨架
+2. 修改 `app.config.json`
+3. 新增或替换 `internal/business/<your-business>/`
+4. 修改 `business_ble.go`，让它调用你的业务注册函数
+5. 替换 `web/index.html` 和其他前端资源
+6. 替换 `web/assets/app.ico` 和网页图标
+7. 运行 `scripts/build_gui.ps1`
+
+业务接入点示例：
+
+```go
+package main
+
+import (
+    "net/http"
+
+    "localweb/internal/business/yourbusiness"
+)
+
+func registerBusinessRoutes(mux *http.ServeMux) {
+    yourbusiness.RegisterRoutes(mux)
+}
+```
+
+## 配置说明
+
+`app.config.json` 里常用字段：
+
+- `id`：应用唯一 ID，用于单实例识别
+- `name`：应用名称
+- `host` / `port`：本地监听地址
+- `startPage`：启动后打开的页面，相对于 `staticDir`
+- `staticDir`：静态网页目录，当前是 `web`
+- `manifestPath`：manifest 的网页路径，相对于 `staticDir`
+- `iconPath`：托盘图标磁盘路径，相对于项目根目录
+- `probePath` / `probeHeader` / `probeValue`：单实例探测接口
+- `windowClassName` / `windowTitle`：Windows 托盘隐藏窗口信息
+- `trayTooltip`：鼠标悬停托盘图标时的提示
+- `openMenuText` / `exitMenuText`：托盘右键菜单文案
+- `autoOpenBrowser`：启动后是否自动打开浏览器
+
+## 框架边界
+
+框架层不依赖 BLE，也不依赖任何具体业务。业务只需要暴露一个：
+
+```go
+func RegisterRoutes(mux *http.ServeMux)
+```
+
+然后入口层把它传给框架即可。
