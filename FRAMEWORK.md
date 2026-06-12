@@ -28,6 +28,7 @@
 
 - 固定端口和本地 HTTP 服务
 - 单实例探测和“程序已打开”提示
+- 版本号注入和展示
 - 自动打开浏览器
 - Windows 托盘图标、右键菜单、退出
 - 静态资源服务
@@ -100,3 +101,31 @@ func RegisterRoutes(mux *http.ServeMux)
 ```
 
 然后入口层把它传给框架即可。
+
+## 版本号
+
+框架提供 `internal/framework/version.go` 管理版本号。
+
+默认值是 `dev`。构建时通过 Go `ldflags` 注入：
+
+```powershell
+go build -ldflags "-X localweb/internal/framework.buildVersion=<version>" .
+```
+
+VS Code 的默认 `build` task 会自动执行：
+
+```powershell
+git describe --tags --always --dirty
+```
+
+并把结果写入程序。托盘右键菜单会显示：
+
+```text
+版本：<version>
+```
+
+`/api/app-info` 也会返回响应头：
+
+```text
+X-App-Version: <version>
+```

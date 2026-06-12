@@ -33,6 +33,8 @@ const (
 	nimDelete = 0x00000002
 
 	mfString    = 0x00000000
+	mfGrayed    = 0x00000001
+	mfDisabled  = 0x00000002
 	mfSeparator = 0x00000800
 
 	tpmRightButton = 0x0002
@@ -272,6 +274,10 @@ func (t *windowsTray) showMenu() {
 
 	appendMenuProc.Call(menu, mfString, menuOpenID, uintptr(unsafe.Pointer(utf16Ptr(t.options.OpenMenuText))))
 	appendMenuProc.Call(menu, mfSeparator, 0, 0)
+	if t.options.VersionText != "" {
+		appendMenuProc.Call(menu, mfString|mfDisabled|mfGrayed, 0, uintptr(unsafe.Pointer(utf16Ptr(t.options.VersionText))))
+		appendMenuProc.Call(menu, mfSeparator, 0, 0)
+	}
 	appendMenuProc.Call(menu, mfString, menuExitID, uintptr(unsafe.Pointer(utf16Ptr(t.options.ExitMenuText))))
 
 	var cursor point

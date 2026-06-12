@@ -8,5 +8,6 @@ type TrayOptions struct {
 	WindowTitle     string
 	OpenMenuText    string
 	ExitMenuText    string
+	VersionText     string
 	OnExit          func()
 }

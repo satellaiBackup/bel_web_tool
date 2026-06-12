@@ -50,6 +50,7 @@ func RunLocalWebApp(config AppConfig, registerRoutes BusinessRouteRegistrar) err
 		WindowTitle:     config.WindowTitle,
 		OpenMenuText:    config.OpenMenuText,
 		ExitMenuText:    config.ExitMenuText,
+		VersionText:     VersionMenuText(),
 		OnExit: func() {
 			_ = server.Close()
 		},
@@ -75,6 +76,7 @@ func RunLocalWebApp(config AppConfig, registerRoutes BusinessRouteRegistrar) err
 func handleAppInfo(config AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(config.ProbeHeader, config.ProbeValue)
+		w.Header().Set("X-App-Version", Version())
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte(config.ProbeValue))
 	}
