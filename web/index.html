@@ -178,6 +178,24 @@
                         <button class="cmd cmd-button" disabled onclick="handleNtnStatus()">查询 NTN 状态</button>
                     </div>
 
+                    <div class="p-3 border rounded-md bg-gray-50 space-y-2">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <div class="font-medium text-gray-700">卫星调试环境模式</div>
+                                <div class="text-xs text-gray-500">控制卫星上报使用生产环境 IP 或调试环境 IP</div>
+                            </div>
+                            <div id="ntnEnvValue" class="text-sm font-semibold text-gray-700">-</div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button class="cmd cmd-button" disabled onclick="handleNtnEnvQuery()">查询环境</button>
+                            <select id="ntnEnvSelect" class="cmd bg-white min-w-[180px]" disabled>
+                                <option value="0">生产环境 IP</option>
+                                <option value="1">调试环境 IP</option>
+                            </select>
+                            <button class="cmd cmd-button" disabled onclick="handleNtnEnvSet()">设置环境</button>
+                        </div>
+                    </div>
+
                     <div id="ntnStatusDisplay" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
                         <div class="bg-gray-50 border rounded-md p-3">
                             <div class="text-xs text-gray-500">PM Mode</div>
@@ -2085,6 +2103,22 @@
             if (data.err !== undefined) setTextById('ntnErrValue', data.err);
         }
 
+        function formatNtnEnvMode(value) {
+            const mode = Number(value);
+            if (mode === 0) return '0 (生产环境 IP)';
+            if (mode === 1) return '1 (调试环境 IP)';
+            if (mode === -1) return '-1 (参数错误)';
+            return `${value} (未知)`;
+        }
+
+        function renderNtnEnvMode(value) {
+            setTextById('ntnEnvValue', formatNtnEnvMode(value));
+            const select = document.getElementById('ntnEnvSelect');
+            if (select && (Number(value) === 0 || Number(value) === 1)) {
+                select.value = String(value);
+            }
+        }
+
         function appendNtnEventLog(payload) {
             const log = document.getElementById('ntnEventLog');
             if (!log) return;
@@ -2203,6 +2237,41 @@
         async function handleNtnStatus() {
             setNtnMessage('正在查询 NTN 状态...', '#2563eb');
             await sendNtnCommand({ c: 'ntn.status' }, 'ntn.status');
+        }
+
+        async function handleNtnEnvQuery() {
+            setNtnMessage('正在查询卫星调试环境模式...', '#2563eb');
+            const payload = await sendNtnCommand({ c: 'env' }, 'env');
+            if (!payload) return;
+
+            if (payload.r === 0 || payload.r === 1) {
+                renderNtnEnvMode(payload.r);
+                setNtnMessage(`卫星调试环境模式：${formatNtnEnvMode(payload.r)}`, '#16a34a');
+            } else if (payload.r === -1) {
+                renderNtnEnvMode(payload.r);
+                setNtnMessage('查询卫星调试环境模式失败：参数错误', '#dc2626');
+            }
+        }
+
+        async function handleNtnEnvSet() {
+            const select = document.getElementById('ntnEnvSelect');
+            const mode = Number(select?.value);
+            if (mode !== 0 && mode !== 1) {
+                setNtnMessage('卫星调试环境模式参数错误，只能选择 0 或 1。', '#dc2626');
+                return;
+            }
+
+            setNtnMessage(`正在设置卫星调试环境模式为：${formatNtnEnvMode(mode)}...`, '#2563eb');
+            const payload = await sendNtnCommand({ c: 'env', p: mode }, 'env');
+            if (!payload) return;
+
+            if (payload.r === 0) {
+                renderNtnEnvMode(mode);
+                setNtnMessage(`卫星调试环境模式设置成功：${formatNtnEnvMode(mode)}`, '#16a34a');
+            } else if (payload.r === -1) {
+                renderNtnEnvMode(payload.r);
+                setNtnMessage('设置卫星调试环境模式失败：参数错误', '#dc2626');
+            }
         }
 
         async function handleNtnSmsSend() {
