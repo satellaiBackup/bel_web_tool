@@ -1,0 +1,64 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "build: gui exe",
+        "build: copy gui exe alias"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "build: gui exe",
+      "type": "process",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$version = git describe --tags --exact-match HEAD 2>$null; if (-not $version) { $version = git describe --tags --always --dirty 2>$null }; if (-not $version) { $version = 'v0.0.0-dev' }; Write-Host ('Build version: ' + $version); $ldflags = @('-s', '-w', '-H', 'windowsgui', '-X', ('localweb/internal/framework.buildVersion=' + $version)) -join ' '; & go build -trimpath -ldflags $ldflags -o main.exe .; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "build: copy gui exe alias",
+      "type": "process",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Copy-Item -Force main.exe ble_web_tool_gui.exe"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "test",
+      "type": "shell",
+      "command": "go",
+      "args": [
+        "test",
+        "./..."
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "test",
+      "problemMatcher": "$go"
+    }
+  ]
+}
