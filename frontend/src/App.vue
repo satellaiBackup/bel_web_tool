@@ -1,10 +1,10 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import legacyMarkup from './legacy/ble-tool.html?raw';
 
-const legacyRoot = ref(null);
+const legacyRoot = ref<HTMLElement | null>(null);
 
-function loadLegacyScript() {
+function loadLegacyScript(): void {
   if (window.__bleWebToolLegacyLoaded) {
     return;
   }
@@ -30,5 +30,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <main ref="legacyRoot"></main>
+  <ElConfigProvider>
+    <main ref="legacyRoot"></main>
+  </ElConfigProvider>
 </template>

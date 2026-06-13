@@ -16,7 +16,7 @@
 ├─ frontend/                       # Vue/Vite 前端源码
 │  ├─ src/
 │  ├─ public/
-│  └─ vite.config.js
+│  └─ vite.config.ts
 ├─ web/                            # 前端构建产物，Go 静态托管目录
 │  ├─ index.html
 │  ├─ gps.html

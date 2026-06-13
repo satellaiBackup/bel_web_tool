@@ -2,7 +2,7 @@ import { createApp } from 'vue';
 import App from './App.vue';
 import './styles.css';
 
-function loadTailwindRuntime() {
+function loadTailwindRuntime(): Promise<void> {
   if (document.querySelector('script[data-tailwind-runtime]')) {
     return Promise.resolve();
   }
@@ -11,8 +11,8 @@ function loadTailwindRuntime() {
     const script = document.createElement('script');
     script.src = './tailwindcss.js';
     script.dataset.tailwindRuntime = 'true';
-    script.onload = resolve;
-    script.onerror = resolve;
+    script.onload = () => resolve();
+    script.onerror = () => resolve();
     document.head.appendChild(script);
   });
 }

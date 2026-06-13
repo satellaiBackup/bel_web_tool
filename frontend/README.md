@@ -7,8 +7,11 @@ Vue/Vite frontend source for the BLE web tool.
 ```powershell
 npm install
 npm run dev
+npm run type-check
 npm run build
 ```
+
+The project uses Vue 3, TypeScript, and Element Plus with on-demand component imports.
 
 Development proxy:
 
