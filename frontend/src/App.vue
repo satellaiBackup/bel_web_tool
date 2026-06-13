@@ -1,36 +1,26 @@
-<script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import legacyMarkup from './legacy/ble-tool.html?raw';
+<template>
+  <el-config-provider :locale="currentLocale">
+    <router-view />
+    <ReDialog />
+  </el-config-provider>
+</template>
 
-const legacyRoot = ref<HTMLElement | null>(null);
+<script lang="ts">
+import { defineComponent } from "vue";
+import { ElConfigProvider } from "element-plus";
+import { ReDialog } from "@/components/ReDialog";
+import zhCn from "element-plus/es/locale/lang/zh-cn";
 
-function loadLegacyScript(): void {
-  if (window.__bleWebToolLegacyLoaded) {
-    return;
+export default defineComponent({
+  name: "app",
+  components: {
+    [ElConfigProvider.name]: ElConfigProvider,
+    ReDialog
+  },
+  computed: {
+    currentLocale() {
+      return zhCn;
+    }
   }
-
-  const script = document.createElement('script');
-  script.id = 'ble-web-tool-legacy-script';
-  script.src = './legacy/ble-tool.js';
-  script.async = false;
-  script.onload = () => {
-    window.__bleWebToolLegacyLoaded = true;
-  };
-  script.onerror = () => {
-    console.error('Unable to load legacy BLE tool script.');
-  };
-  document.body.appendChild(script);
-}
-
-onMounted(() => {
-  if (!legacyRoot.value) return;
-  legacyRoot.value.innerHTML = legacyMarkup;
-  loadLegacyScript();
 });
 </script>
-
-<template>
-  <ElConfigProvider>
-    <main ref="legacyRoot"></main>
-  </ElConfigProvider>
-</template>
