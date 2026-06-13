@@ -6,3 +6,4 @@ frontend/.vite-dev-*.log
 frontend/auto-imports.d.ts
 frontend/components.d.ts
 web/
+.codegraph/
