@@ -150,13 +150,23 @@ function snapshot(): GeneratorSettings {
       </div>
 
       <el-form-item label="发送间隔 ms">
-        <el-slider
-          v-model="form.sendIntervalMs"
-          :min="100"
-          :max="5000"
-          :step="100"
-          show-input
-        />
+        <div class="interval-control">
+          <el-input-number
+            v-model="form.sendIntervalMs"
+            :min="100"
+            :max="5000"
+            :step="100"
+            controls-position="right"
+            class="interval-input"
+          />
+          <el-slider
+            v-model="form.sendIntervalMs"
+            :min="100"
+            :max="5000"
+            :step="100"
+            class="interval-slider"
+          />
+        </div>
       </el-form-item>
 
       <el-form-item label="语句">
@@ -200,3 +210,25 @@ function snapshot(): GeneratorSettings {
     </div>
   </section>
 </template>
+
+<style scoped lang="scss">
+.interval-control {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  width: 100%;
+}
+
+.interval-input,
+.interval-slider {
+  min-width: 0;
+}
+
+@media (width <= 720px) {
+  .interval-control {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
+</style>
