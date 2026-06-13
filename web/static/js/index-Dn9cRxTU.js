@@ -1,1 +1,0 @@
-import{w as e,o as n,c as o}from"./index-Dl8vE2uh.js";const m=e({name:"Welcome",__name:"index",setup(t){return(a,c)=>(n(),o("h1",null,"Pure-Admin-Thin（非国际化版本）"))}});export{m as default};
