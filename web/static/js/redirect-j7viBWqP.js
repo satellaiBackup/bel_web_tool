@@ -1,1 +1,0 @@
-import{w as c,l as s,u as p,o as u,c as _}from"./index-CsGYEGS4.js";const f=c({name:"Redirect",__name:"redirect",setup(i){const{currentRoute:r,replace:t}=s(),{params:a,query:n}=p(r),{path:e}=a,o=Array.isArray(e)?e.join("/"):e;return t({path:"/"+o,query:n}),(m,l)=>(u(),_("div"))}});export{f as default};
