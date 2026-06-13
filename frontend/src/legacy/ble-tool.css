@@ -403,6 +403,14 @@
   --section-color: var(--ble-amber);
 }
 
+#communicationSection {
+  --section-color: var(--ble-amber);
+}
+
+#positioningSection {
+  --section-color: var(--ble-cyan);
+}
+
 #wifiCommandsSection {
   --section-color: #475569;
 }
