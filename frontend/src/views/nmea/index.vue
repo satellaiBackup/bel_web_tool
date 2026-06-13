@@ -356,10 +356,8 @@ onUnmounted(() => {
 .nmea-workbench {
   min-height: calc(100vh - 86px);
   padding: 20px;
-  color: #172033;
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 86%), rgb(246 248 251 / 92%)),
-    #f6f8fb;
+  color: var(--el-text-color-primary);
+  background: var(--el-bg-color-page);
 }
 
 .tool-heading {
@@ -372,6 +370,7 @@ onUnmounted(() => {
 
   h1 {
     margin: 2px 0 0;
+    color: var(--el-text-color-primary);
     font-size: 26px;
     font-weight: 760;
     line-height: 1.2;
@@ -383,7 +382,7 @@ onUnmounted(() => {
   display: block;
   font-size: 12px;
   font-weight: 760;
-  color: #0f766e;
+  color: var(--el-color-primary);
   text-transform: uppercase;
 }
 
@@ -399,21 +398,22 @@ onUnmounted(() => {
   min-height: 74px;
   padding: 14px;
   overflow: hidden;
-  background: #fff;
-  border: 1px solid #e6eaf0;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
-  box-shadow: 0 10px 28px rgb(15 23 42 / 6%);
+  box-shadow: var(--el-box-shadow-light);
 
   span {
     display: block;
     margin-bottom: 8px;
     font-size: 12px;
-    color: #667085;
+    color: var(--el-text-color-secondary);
   }
 
   strong {
     display: block;
     overflow: hidden;
+    color: var(--el-text-color-primary);
     font-size: 18px;
     line-height: 1.2;
     text-overflow: ellipsis;
@@ -422,23 +422,23 @@ onUnmounted(() => {
 }
 
 .tone-green {
-  border-top: 3px solid #16a34a;
+  border-top: 3px solid var(--el-color-success);
 }
 
 .tone-amber {
-  border-top: 3px solid #d97706;
+  border-top: 3px solid var(--el-color-warning);
 }
 
 .tone-blue {
-  border-top: 3px solid #2563eb;
+  border-top: 3px solid var(--el-color-primary);
 }
 
 .tone-teal {
-  border-top: 3px solid #0f766e;
+  border-top: 3px solid var(--el-color-primary-light-3);
 }
 
 .tone-gray {
-  border-top: 3px solid #98a2b3;
+  border-top: 3px solid var(--el-color-info);
 }
 
 .work-grid {
@@ -451,10 +451,10 @@ onUnmounted(() => {
 
 :deep(.nmea-panel) {
   padding: 16px;
-  background: #fff;
-  border: 1px solid #e6eaf0;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
-  box-shadow: 0 12px 32px rgb(15 23 42 / 7%);
+  box-shadow: var(--el-box-shadow-light);
 }
 
 :deep(.panel-heading) {
@@ -466,6 +466,7 @@ onUnmounted(() => {
 
   h2 {
     margin: 2px 0 0;
+    color: var(--el-text-color-primary);
     font-size: 18px;
     font-weight: 740;
     line-height: 1.25;
@@ -506,9 +507,9 @@ onUnmounted(() => {
   min-height: 38px;
   padding: 8px 10px;
   margin-top: 14px;
-  color: #344054;
-  background: #f8fafc;
-  border: 1px solid #eef2f6;
+  color: var(--el-text-color-regular);
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
 }
 
@@ -555,7 +556,7 @@ onUnmounted(() => {
   .upload-icon {
     margin-bottom: 6px;
     font-size: 26px;
-    color: #0f766e;
+    color: var(--el-color-primary);
   }
 }
 
@@ -574,9 +575,10 @@ onUnmounted(() => {
     "Courier New", monospace;
   font-size: 13px;
   line-height: 1.65;
-  color: #e5eefb;
+  color: var(--el-text-color-primary);
   white-space: pre-wrap;
-  background: #111827;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
 }
 
