@@ -555,6 +555,11 @@
             });
         }
 
+        function appendLogLine(element, text, direction = '>') {
+            const value = String(text ?? '');
+            appendLog(element, /[\r\n]$/.test(value) ? value : `${value}\n`, direction);
+        }
+
         let resolveDfu = null;
 
         const DEFAULT_APP_RESPONSE_TIMEOUT = 400;
@@ -615,10 +620,11 @@
 
             await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharApp, event => {
                 const text = new TextDecoder().decode(event.target.value);
+                const isWaitingForAppResponse = Boolean(pendingAppResponse);
 
                 const appLbl = document.getElementById('appCmdRspLog');
-                if (appLbl) {
-                    appendLog(appLbl, text, '>');
+                if (appLbl && !isWaitingForAppResponse) {
+                    appendLogLine(appLbl, text, '>');
                     appLbl.scrollTop = appLbl.scrollHeight;
                 }
 
@@ -628,7 +634,7 @@
                         if (response.e !== undefined) {
                             const eventLbl = document.getElementById('eventMessagesLog');
                             if (eventLbl) {
-                                appendLog(eventLbl, JSON.stringify(response), '>');
+                                appendLogLine(eventLbl, JSON.stringify(response), '>');
                                 eventLbl.scrollTop = eventLbl.scrollHeight;
                             }
 
@@ -678,89 +684,7 @@
                 }
                 await peripheral.request();
                 await peripheral.connect();
-
-                await peripheral.startCmdNotifications(uuidSvcNus, uuidCharNotify, event => {
-                    const text = new TextDecoder().decode(event.target.value);
-                    const lbl = document.getElementById('customCmdRsp');
-                    if (lbl) {
-                        appendLog(lbl, text, '>');
-                        lbl.scrollTop = lbl.scrollHeight;
-                    }
-                    
-                    // 检查是否有待处理的命令需要响应
-                    if (pendingCommands.size > 0) {
-                        // 获取最早的待处理命令
-                        const [commandId, commandInfo] = pendingCommands.entries().next().value;
-                        
-                        // 将接收到的文本添加到命令响应缓冲区
-                        commandInfo.response += text;
-                        commandInfo.lastActivityTime = Date.now();
-                        
-                        // 检查是否收到完整的响应
-                        if (commandInfo.response.endsWith('OK\r\n') || commandInfo.response.endsWith('ERROR\r\n')) {
-                            // 命令完成，解决Promise
-                            if (commandInfo.resolve) {
-                                commandInfo.resolve(commandInfo.response);
-                            }
-                            // 从待处理列表中移除
-                            pendingCommands.delete(commandId);
-                        }
-                    }
-                });
-                await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharApp, event => {
-                    const text = new TextDecoder().decode(event.target.value);
-                    
-                    // 总是在APP日志中显示接收到的数据
-                    const appLbl = document.getElementById('appCmdRspLog');
-                    if (appLbl) {
-                        appendLog(appLbl, text, '>');
-                        appLbl.scrollTop = appLbl.scrollHeight;
-                    }
-                    
-                    // 尝试解析JSON并处理各种事件
-                    try {
-                        const responses = parseMultipleJsonResponses(text);
-                        responses.forEach(response => {
-                            // 检查是否是事件类消息 ({"e":"xxxxx"})
-                            if (response.e !== undefined) {
-                                // 将事件类消息添加到专门的事件消息区域
-                                const eventLbl = document.getElementById('eventMessagesLog');
-                                if (eventLbl) {
-                                    appendLog(eventLbl, JSON.stringify(response), '>');
-                                    eventLbl.scrollTop = eventLbl.scrollHeight;
-                                }
-                                
-                                // 如果是wifi-scan事件，还需要特殊处理
-                                if (response.e === 'wifi-scan') {
-                                    handleWifiScanEvent(response);
-                                }
-
-                                if (response.e === 'ntn_state' || response.e === 'ntn_sms_tx' || response.e === 'ntn_sms_rx') {
-                                    handleNtnEvent(response);
-                                }
-                            }
-                        });
-                    } catch (error) {
-                        // 如果解析失败，不影响其他功能
-                        console.debug('解析事件失败:', error);
-                    }
-                    
-                    // 如果有等待APP响应的Promise，也要处理
-                    if (pendingAppResponse) {
-                        pendingAppResponse.buffer += text;
-                        if (pendingAppResponse.inactivityTimer) clearTimeout(pendingAppResponse.inactivityTimer);
-                        pendingAppResponse.inactivityTimer = setTimeout(() => {
-                            flushPendingAppResponse();
-                        }, pendingAppResponse.inactivityMs);
-                    }
-                });
-                await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharDfu, event => {
-                    if (resolveDfu) {
-                        resolveDfu(event.target.value);
-                        resolveDfu = null;
-                    }
-                    else console.warn(event.target.value);
-                });
+                await startDefaultBleNotifications();
             } catch (error) {
                 console.error('[ERROR] 设备连接或订阅失败:', error);
                 
@@ -1236,303 +1160,6 @@
             }
         }
 
-        async function readSN() {
-            setTimeout(async () => {
-                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+SN?');                    
-            }, 0);
-            
-            const rsp = await waitForCmdResponse('AT+SN?');
-            console.log(rsp);
-            
-            const lbl = document.querySelector(`label[for="readSN"]`);
-            lbl.innerText = rsp;
-            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
-            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
-            else lbl.style.color = 'orange';
-        }
-
-        async function writeWWANTryCnt() {
-            const cmd = 'AT+WWANTRY='+document.getElementById('WWANTRY').value;
-            setTimeout(async () => {
-                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, cmd);                    
-            }, 0);
-            
-            const rsp = await waitForCmdResponse(cmd);
-            console.log(rsp);
-            const lbl = document.querySelector(`label[for="writeWWANTryCnt"]`);
-            lbl.innerText = rsp;
-            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
-            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
-            else lbl.style.color = 'orange';
-        }
-
-
-        async function readWWANTryCnt() {
-            setTimeout(async () => {
-                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+WWANTRY?');                    
-            }, 0);
-            
-            const rsp = await waitForCmdResponse('AT+WWANTRY?');
-            console.log(rsp);
-            const lbl = document.querySelector(`label[for="readWWANTryCnt"]`);
-            lbl.innerText = rsp;
-            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
-            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
-            else lbl.style.color = 'orange';
-        }
-
-        async function writeNTNsendData() {
-
-            const ntnSendInput = document.getElementById('NTNsend');
-            const ntnValue = ntnSendInput.value.trim();
-            const selectedMode = document.querySelector('input[name="ntnMode"]:checked').value;
-            const responseLabel = document.querySelector('label.rsp[for="writeNTNsendData"]');
-
-            let dataToSend;
-            let parsedBytes = [];
-
-            responseLabel.textContent = ''; // Clear previous response/error
-
-            if (!ntnValue) {
-                responseLabel.textContent = "错误：输入内容不能为空 (Error: Input cannot be empty)";
-                ntnSendInput.focus();
-                return;
-            }
-
-            if (selectedMode === 'ascii') {
-                // In ASCII mode, the string itself is the data (or convert to byte array if needed)
-                // For example, converting string to an array of character codes (bytes)
-                for (let i = 0; i < ntnValue.length; i++) {
-                    parsedBytes.push(ntnValue.charCodeAt(i));
-                }
-                dataToSend = ntnValue; // Or parsedBytes if you need the byte array
-                responseLabel.textContent = `ASCII模式发送: "${dataToSend}" (字节: ${parsedBytes.join(', ')})`;
-                console.log("Processing as ASCII:", dataToSend);
-                console.log("ASCII Byte Array:", parsedBytes);
-
-            } else if (selectedMode === 'hex') {
-                // In Hex mode, parse "B4C7" as 0xB4, 0xC7
-                if (ntnValue.length % 2 !== 0) {
-                    responseLabel.textContent = "错误：16进制内容长度必须为偶数";
-                    ntnSendInput.focus();
-                    return;
-                }
-                if (!/^[0-9a-fA-F]+$/.test(ntnValue)) {
-                    responseLabel.textContent = "错误：16进制内容包含无效字符";
-                    ntnSendInput.focus();
-                    return;
-                }
-
-                try {
-                    for (let i = 0; i < ntnValue.length; i += 2) {
-                        const byteHex = ntnValue.substring(i, i + 2);
-                        const byteInt = parseInt(byteHex, 16);
-                        if (isNaN(byteInt)) { // Should be caught by regex, but good to double check
-                            throw new Error("Invalid hex byte: " + byteHex);
-                        }
-                        parsedBytes.push(byteInt);
-                    }
-                    dataToSend = parsedBytes; // This will be an array of numbers like [180, 199] for "B4C7"
-                    responseLabel.textContent = `16进制模式发送 (字节): ${parsedBytes.map(b => '0x' + b.toString(16).toUpperCase().padStart(2, '0')).join(', ')}`;
-                    console.log("Processing as Hex. Input:", ntnValue);
-                    console.log("Hex Byte Array:", parsedBytes);
-                    console.log("COMMAND Byte Array:", 'AT+NTNDATA=0,"'+ parsedBytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('') +'"');
-                } catch (e) {
-                    responseLabel.textContent = "错误：解析16进制内容失败 - " + e.message;
-                    console.error("Hex parsing error:", e);
-                    return;
-                }
-            }
-
-
-
-            let cmd;
-            if (selectedMode === 'ascii') {
-                cmd = 'AT+NTNDATA=0,"'+document.getElementById('NTNsend').value+'"';
-            } else {
-                cmd = 'AT+NTNDATA=1,"'+ parsedBytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('') +'"';
-            }
-            
-            setTimeout(async () => {
-                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, cmd);          
-            }, 0);
-            
-            const rsp = await waitForCmdResponse(cmd);
-            console.log(rsp);
-            const lbl = document.querySelector(`label[for="writeNTNsendData"]`);
-            lbl.innerText = rsp;
-            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
-            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
-            else lbl.style.color = 'orange';
-        }
-
-        // Add event listeners to radio buttons to potentially clear input or provide feedback on mode change
-        const modeAsciiRadio = document.getElementById('modeAscii');
-        const modeHexRadio = document.getElementById('modeHex');
-        if (modeAsciiRadio) modeAsciiRadio.addEventListener('change', handleModeChange);
-        if (modeHexRadio) modeHexRadio.addEventListener('change', handleModeChange);
-
-        function handleModeChange() {
-            const ntnSendInput = document.getElementById('NTNsend');
-            const responseLabel = document.querySelector('label.rsp[for="writeNTNsendData"]');
-            const checked = document.querySelector('input[name="ntnMode"]:checked');
-            if (!checked) return;
-            const selectedMode = checked.value;
-
-            // Optional: Clear input or provide guidance when mode changes
-            // ntnSendInput.value = ''; // Uncomment to clear input on mode change
-            if (selectedMode === 'ascii') {
-                ntnSendInput.placeholder = "输入ASCII内容 (e.g., Hello)";
-            } else {
-                ntnSendInput.placeholder = "输入16进制内容 (e.g., B4C7)";
-            }
-            if (responseLabel) {
-                responseLabel.textContent = `模式已切换到: ${selectedMode === 'ascii' ? 'ASCII' : '16进制'}`;
-            }
-        }
-
-        // Initialize placeholder based on default checked mode when controls are enabled
-        // Call this if/when you enable the controls
-        function initializeInputPlaceholder() {
-            const ntnSendInput = document.getElementById('NTNsend');
-            if (!ntnSendInput.disabled) { // Only if it's enabled
-                if (modeAsciiRadio && modeAsciiRadio.checked) {
-                    ntnSendInput.placeholder = "输入ASCII内容 (e.g., Hello)";
-                } else if (modeHexRadio) {
-                    ntnSendInput.placeholder = "输入16进制内容 (e.g., B4C7)";
-                }
-            }
-        }
-
-
-        async function readNTNsendData() {
-            setTimeout(async () => {
-                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+NTNDATA?');                    
-            }, 0);
-            
-            const rsp = await waitForCmdResponse('AT+NTNDATA?');
-            console.log(rsp);
-            
-            const lbl = document.querySelector(`label[for="readNTNsendData"]`);
-            lbl.innerText = rsp;
-            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
-            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
-            else lbl.style.color = 'orange';
-        }
-
-        async function readservingcell() {
-            setTimeout(async () => {
-                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+SERVINGCELL?');                    
-            }, 0);
-            
-            const rsp = await waitForCmdResponse('AT+SERVINGCELL?');
-            console.log(rsp);
-            
-            const lbl = document.querySelector(`label[for="readservingcell"]`);
-            lbl.innerText = rsp;
-            if (rsp.endsWith('OK\r\n')) lbl.style.color ='green';
-            else if (rsp.endsWith('ERROR\r\n')) lbl.style.color ='red';
-            else lbl.style.color = 'orange';
-        }
-        
-        
-        async function readDEVstate() {
-            setTimeout(async () => {
-                await peripheral.sendCmd(uuidSvcNus, uuidCharWrite, 'AT+DEVSTATE?');
-            }, 0);
-            
-            const rsp = await waitForCmdResponse('AT+DEVSTATE?');
-            console.log('Original rsp: ' + rsp); // Log the original response
-
-            const lbl = document.querySelector(`label[for="readDEVstate"]`);
-            let stateDescription = "无法解析状态"; // Default message: Unable to parse state
-
-            if (rsp.includes('\r\n')) {
-                // Split the response by \r\n. The first part should be the state value.
-                const parts = rsp.split('\r\n');
-                const stateValueString = parts[0]; // e.g., "1"
-
-                // Try to parse the extracted string as an integer
-                const stateValueInt = parseInt(stateValueString, 10);
-
-                if (!isNaN(stateValueInt)) {
-                    // If parsing is successful, get the Chinese description
-                    stateDescription = getBg95ModuleStateDescription(stateValueInt);
-                    console.log(`Parsed state value: ${stateValueInt}, Description: ${stateDescription}`);
-                } else {
-                    console.warn(`Could not parse state value from: ${stateValueString}`);
-                    if (rsp.endsWith('OK\r\n') || rsp.endsWith('ERROR\r\n')) {
-                        // If it ends with OK or ERROR but we couldn't parse a number before it,
-                        // it might be just "OK\r\n" or "ERROR\r\n" or some other format.
-                        stateDescription = `响应: ${rsp.trim()}`; // Show trimmed response
-                    } else {
-                        stateDescription = `无法解析状态值从: ${rsp.trim()}`; // Unable to parse state value from
-                    }
-                }
-            } else if (rsp.trim() !== '') {
-                // Handle cases where response might not contain \r\n but is not empty
-                stateDescription = `收到响应: ${rsp.trim()}`; // Received response
-            }
-
-
-            lbl.innerText = stateDescription; // Display the Chinese description or other info
-
-            if (rsp.endsWith('OK\r\n')) {
-                lbl.style.color = 'green';
-            } else if (rsp.endsWith('ERROR\r\n')) {
-                lbl.style.color = 'red';
-            } else {
-                lbl.style.color = 'orange'; // Default color for other cases
-            }
-        }
-
-
-        function getBg95ModuleStateDescription(stateValue) {
-
-            /**
-             * BG95_ModuleState C 枚举的对应值和中文描述
-             * Corresponding values and Chinese descriptions for the BG95_ModuleState C enum
-             */
-            const BG95_MODULE_STATE_DESCRIPTIONS = {
-                0: "模组硬件开机",          // MODULE_STATE_INIT_POWERON
-                1: "基础参数初始化",        // MODULE_STATE_INIT_PARAMETERS
-                2: "NTN处理",             // MODULE_STATE_NTN_HANDLE (搜网、注网、PDP上下文激活)
-                3: "UDP处理",             // MODULE_STATE_UDP_HANDLE (打包、打开、连接、上报、等待回应、解析回应、关闭)
-                4: "GSM处理",             // MODULE_STATE_WWAN_HANDLE (搜网、注网、PDP上下文激活)
-                5: "GNSS处理",            // MODULE_STATE_GNSS_HANDLE (采集)
-                6: "MQTT处理",            // MODULE_STATE_MQTT_HANDLE (打包、打开、连接、订阅、上报、等待下发消息、关闭)
-                7: "XTRA数据处理",        // MODULE_STATE_XTRA_HANDLE (更新和检查XTRA数据)
-                8: "低功耗模式",          // MODULE_STATE_LOW_POWER_MODE
-                9: "未知/异常状态"        // MODULE_STATE_CNT (通常 MODULE_STATE_CNT 用于表示枚举成员的数量，也可能被用作错误或默认状态)
-                // 注意：如果 MODULE_STATE_CNT (值为9) 不是一个有效的运行时状态，而是用于定义枚举大小，
-                // 那么在实际应用中，对于接收到的值 9，您可能需要特殊处理或将其视为“未知状态”。
-                // Note: If MODULE_STATE_CNT (value 9) is not a valid runtime state but is used to define the enum size,
-                // you might need to handle the received value 9 specially or treat it as an "unknown state" in practical applications.
-            };
-            // 检查传入的值是否为数字
-            // Check if the input value is a number
-            if (typeof stateValue !== 'number') {
-                console.warn("getBg95ModuleStateDescription: 输入值不是一个数字，已收到:", stateValue);
-                // Input value is not a number, received:
-                return "无效输入 (非数字)"; // Invalid input (not a number)
-            }
-
-            // 尝试从映射中获取描述
-            // Try to get the description from the mapping
-            const description = BG95_MODULE_STATE_DESCRIPTIONS[stateValue];
-
-            if (description) {
-                return description;
-            } else {
-                // 如果枚举值在映射中未定义，则返回一个通用的未知状态提示
-                // If the enum value is not defined in the mapping, return a generic unknown state message
-                console.warn(`getBg95ModuleStateDescription: 未知的模块状态值: ${stateValue}`);
-                // Unknown module state value:
-                return `未知状态 (${stateValue})`; // Unknown state
-            }
-        }
-
-
         // New helper function to send app commands and display response
         async function sendAppCommandViaBle(jsonString, options = {}) {
             const {
@@ -1584,7 +1211,7 @@
                     });
                     await peripheral.sendCmd(uuidSvcSatellai, uuidCharApp, jsonString);
                     const rsp = await responsePromise;
-                    if (logElement) {
+                    if (logElement && String(rsp ?? '').length > 0) {
                         appendLog(logElement, `RESP(${labelPrefix}): ${rsp}\n`, '>');
                         logElement.scrollTop = logElement.scrollHeight;
                     }
@@ -2653,13 +2280,6 @@
             sendCert,
             sendFile,
             sendCmdAndWaitForOK,
-            readSN,
-            writeWWANTryCnt,
-            readWWANTryCnt,
-            readservingcell,
-            readDEVstate,
-            writeNTNsendData,
-            readNTNsendData,
             clearEventMessages,
             sendAppCommandViaBle,
             handleNtnEnterOnlyMode,

@@ -130,10 +130,10 @@
       <div class="section-heading">
         <p class="eyebrow">Command Center</p>
         <h2>命令调试</h2>
-        <span>NUS 自定义命令、APP 快捷命令、蜂窝 AT 辅助命令和事件消息。</span>
+        <span>NUS 自定义命令、APP 快捷命令和事件消息。</span>
       </div>
 
-      <div class="admin-grid two-columns">
+      <div class="admin-grid">
         <article class="admin-card">
           <div class="card-heading">
             <div>
@@ -158,50 +158,6 @@
             <div>
               <div class="log-title">命令响应</div>
               <div id="customCmdRsp" class="log-panel small"></div>
-            </div>
-          </div>
-        </article>
-
-        <article class="admin-card">
-          <div class="card-heading">
-            <div>
-              <h3>蜂窝与 NTN AT 辅助</h3>
-              <p>脚本中已有的低层 AT 调试入口。</p>
-            </div>
-          </div>
-
-          <div class="command-list">
-            <div class="command-row">
-              <button id="readSN" class="cmd cmd-button" disabled onclick="readSN()">读取 SN</button>
-              <label for="readSN" class="rsp response-text"></label>
-            </div>
-            <div class="command-row">
-              <input type="number" id="WWANTRY" class="cmd cmd-input admin-input narrow" min="0" placeholder="重试次数" disabled>
-              <button id="writeWWANTryCnt" class="cmd cmd-button" disabled onclick="writeWWANTryCnt()">写入 WWANTRY</button>
-              <button id="readWWANTryCnt" class="cmd cmd-button secondary" disabled onclick="readWWANTryCnt()">读取 WWANTRY</button>
-              <label for="writeWWANTryCnt" class="rsp response-text"></label>
-              <label for="readWWANTryCnt" class="rsp response-text"></label>
-            </div>
-            <div class="command-row">
-              <button id="readservingcell" class="cmd cmd-button" disabled onclick="readservingcell()">查询 Serving Cell</button>
-              <label for="readservingcell" class="rsp response-text"></label>
-            </div>
-            <div class="command-row">
-              <button id="readDEVstate" class="cmd cmd-button" disabled onclick="readDEVstate()">查询 DEV 状态</button>
-              <label for="readDEVstate" class="rsp response-text"></label>
-            </div>
-            <div class="ntn-at-box">
-              <div class="radio-group">
-                <label><input type="radio" id="modeAscii" name="ntnMode" value="ascii" class="cmd" checked disabled> ASCII</label>
-                <label><input type="radio" id="modeHex" name="ntnMode" value="hex" class="cmd" disabled> HEX</label>
-              </div>
-              <div class="inline-controls">
-                <input type="text" id="NTNsend" class="cmd cmd-input admin-input" placeholder="输入 ASCII 内容，例如 Hello" disabled>
-                <button id="writeNTNsendData" class="cmd cmd-button" disabled onclick="writeNTNsendData()">写入 NTN 数据</button>
-                <button id="readNTNsendData" class="cmd cmd-button secondary" disabled onclick="readNTNsendData()">读取 NTN 数据</button>
-              </div>
-              <label for="writeNTNsendData" class="rsp response-text"></label>
-              <label for="readNTNsendData" class="rsp response-text"></label>
             </div>
           </div>
         </article>
