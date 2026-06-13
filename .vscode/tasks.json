@@ -5,12 +5,29 @@
       "label": "build",
       "dependsOrder": "sequence",
       "dependsOn": [
+        "build: frontend",
         "build: gui exe",
         "build: copy gui exe alias"
       ],
       "group": {
         "kind": "build",
         "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "build: frontend",
+      "type": "process",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/build_frontend.ps1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
       },
       "problemMatcher": []
     },

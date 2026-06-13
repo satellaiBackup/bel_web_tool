@@ -1,12 +1,13 @@
 # 本地 BLE 调试服务
 
-这是一个使用 Go 编写的本地调试服务。它除了会随机选择本机空闲端口、自动打开浏览器并载入本目录下的 `index.html` 之外，还会通过 `tinygo.org/x/bluetooth` 在本机接管 BLE 扫描、连接、特征写入和通知转发。
+这是一个前后端分离的本地 BLE 调试工具。后端使用 Go 提供本地 HTTP API、托盘和 BLE 能力，前端使用 Vue/Vite 承载页面与业务交互，构建后的静态资源输出到 `web/` 并由 Go 服务托管。
 
 这版的目的，是解决浏览器 Web Bluetooth 无法直接暴露真实 MAC 地址、同名设备难以区分的问题。页面顶部现在会先扫描本机附近的 BLE 设备，再把设备名称、MAC、RSSI 列出来，用户选中后再连接。
 
 ## 环境要求
 
 - 安装 [Go](https://go.dev/dl/)（推荐 1.21 及以上版本）
+- 安装 [Node.js](https://nodejs.org/) 和 npm，用于前端开发与构建
 - Windows 10/11，且本机蓝牙已开启
 - 首次使用时，如系统弹出蓝牙权限提示，请允许
 
@@ -16,7 +17,8 @@
 - 按扫描结果选择目标设备并建立连接
 - 通过本地 HTTP API 代理特征写入
 - 通过 SSE 把通知转发回页面，兼容现有 AT/App/DFU 逻辑
-- `go run .` 和编译后的可执行文件都会自动定位包含 `index.html` 的目录
+- 前端源码位于 `frontend/`，生产构建产物位于 `web/`
+- `go run .` 和编译后的可执行文件都会自动定位包含 `web/index.html` 的目录
 
 ## 使用方式
 
@@ -29,10 +31,29 @@ go run .
 
 程序启动后会：
 
-1. 自动挑选一个空闲端口（例如 `http://127.0.0.1:54321`）。
+1. 监听 `app.config.json` 中配置的本地地址，默认是 `http://127.0.0.1:51888`。
 2. 自动打开默认浏览器并访问 `index.html`。
 3. 在终端中打印页面请求和本地 API 访问日志。
 4. 页面中可先点击“扫描设备”，再从列表中选择设备连接。
+
+### 前端开发
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Vite 默认运行在 `http://127.0.0.1:5173/`，并把 `/api/*` 代理到 Go 后端 `http://127.0.0.1:51888`。因此前端开发时通常需要另开一个终端运行 `go run .`。
+
+### 前端构建
+
+```powershell
+cd frontend
+npm run build
+```
+
+构建结果会写入仓库根目录的 `web/`，Go 后端继续以 `web/` 作为静态目录。
 
 ### 构建独立可执行文件
 
@@ -58,11 +79,12 @@ go build -o ble_tool.exe
 
 ```
 .
-├── index.html        # 主页面
-├── gps.html          # 围栏编辑器
-├── tailwindcss.js    # 样式依赖
-├── ble.go            # BLE 扫描/连接/API/SSE
+├── frontend/         # Vue/Vite 前端源码
+├── web/              # 前端构建产物，Go 静态托管目录
+├── internal/         # Go 框架与 BLE 业务 API
+├── scripts/          # 工程脚本
 ├── main.go           # Go 服务端入口
+├── business_ble.go   # 业务路由接入
 ├── go.mod            # Go 模块定义
 ├── go.sum            # 依赖校验
 └── README.md         # 当前说明
