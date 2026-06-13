@@ -664,11 +664,14 @@
             });
         }
 
-        document.getElementById('scanDevices').addEventListener('click', async () => {
-            await scanBleDevices();
-        });
+        const scanDevicesButton = document.getElementById('scanDevices');
+        if (scanDevicesButton && !scanDevicesButton.dataset.vueAction) {
+            scanDevicesButton.addEventListener('click', async () => {
+                await scanBleDevices();
+            });
+        }
 
-        document.getElementById('scanAndConnect').addEventListener('click', async event => {
+        async function connectSelectedDevice() {
             try {
                 if (bleScanLoopActive) {
                     await stopBleScanLoop();
@@ -778,7 +781,12 @@
                 setBleConnectionControls(false);
                 document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
             }
-        });
+        }
+
+        const scanAndConnectButton = document.getElementById('scanAndConnect');
+        if (scanAndConnectButton && !scanAndConnectButton.dataset.vueAction) {
+            scanAndConnectButton.addEventListener('click', connectSelectedDevice);
+        }
 
         function timestamp() {
             const now = new Date();
@@ -852,7 +860,7 @@
             }
         });
 
-        document.getElementById('disconnect').addEventListener('click', async event => {
+        function disconnectBleDevice() {
             // 清理所有待处理的命令
             pendingCommands.forEach((commandInfo, commandId) => {
                 if (commandInfo.reject) {
@@ -863,7 +871,12 @@
             
             //忽略取消订阅
             peripheral.disconnect();
-        });
+        }
+
+        const disconnectButton = document.getElementById('disconnect');
+        if (disconnectButton && !disconnectButton.dataset.vueAction) {
+            disconnectButton.addEventListener('click', disconnectBleDevice);
+        }
 
         function chooseFile(input) {
             console.log(input);
@@ -2631,3 +2644,43 @@
             }
             return crc;
         }
+
+        Object.assign(window, {
+            scanBleDevices,
+            connectSelectedDevice,
+            disconnectBleDevice,
+            chooseFile,
+            sendCert,
+            sendFile,
+            sendCmdAndWaitForOK,
+            readSN,
+            writeWWANTryCnt,
+            readWWANTryCnt,
+            readservingcell,
+            readDEVstate,
+            writeNTNsendData,
+            readNTNsendData,
+            clearEventMessages,
+            sendAppCommandViaBle,
+            handleNtnEnterOnlyMode,
+            handleNtnExitOnlyMode,
+            handleNtnStatus,
+            handleNtnEnvQuery,
+            handleNtnEnvSet,
+            handleNtnSmsSend,
+            handleAppActivateFence,
+            handleAppDeactivateFence,
+            handleAppDeleteFence,
+            handleAppSetFenceParams,
+            handleAppDebugEventGnss,
+            openFenceEditor,
+            handleWifiEnable,
+            handleWifiDisable,
+            handleWifiStatus,
+            handleWifiScan,
+            handleWifiAddTag,
+            handleWifiDeleteTag,
+            handleWifiQueryTags,
+            openWifiLocationPicker,
+            clearWifiLocation
+        });
