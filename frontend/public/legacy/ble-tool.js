@@ -3,6 +3,7 @@
         uuidCharApp = '00000002-ffff-4fff-8fff-5a7e11a1ffff';
         uuidCharDfu = '00000005-ffff-4fff-8fff-5a7e11a1ffff';
         uuidCharRtt = '00000008-ffff-4fff-8fff-5a7e11a1ffff';
+        uuidCharTransport = '0000000e-ffff-4fff-8fff-5a7e11a1ffff';
         uuidSvcNus = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
         uuidCharWrite = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
         uuidCharNotify = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
@@ -436,7 +437,8 @@
 
                 const syntheticEvent = {
                     target: {
-                        value: decodeBase64ToDataView(payload.data)
+                        value: decodeBase64ToDataView(payload.data),
+                        transportChannel: payload.transportChannel
                     }
                 };
 
@@ -657,6 +659,16 @@
                     pendingAppResponse.inactivityTimer = setTimeout(() => {
                         flushPendingAppResponse();
                     }, pendingAppResponse.inactivityMs);
+                }
+            });
+
+            await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharTransport, event => {
+                const text = new TextDecoder().decode(event.target.value);
+                const channel = event.target.transportChannel;
+                const appLbl = document.getElementById('appCmdRspLog');
+                if (appLbl) {
+                    appendLogLine(appLbl, `TP[CH=${channel ?? '?'}]: ${text}`, '>');
+                    appLbl.scrollTop = appLbl.scrollHeight;
                 }
             });
 

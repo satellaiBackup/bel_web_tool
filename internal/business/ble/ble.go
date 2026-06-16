@@ -56,6 +56,7 @@ type bleConnection struct {
 	opMu        sync.Mutex
 	charCache   map[string]bluetooth.DeviceCharacteristic
 	notifyState map[string]bool
+	transport   *bleTransportState
 }
 
 type bleEvent struct {
@@ -65,6 +66,7 @@ type bleEvent struct {
 	Name               string `json:"name,omitempty"`
 	ServiceUUID        string `json:"serviceUuid,omitempty"`
 	CharacteristicUUID string `json:"characteristicUuid,omitempty"`
+	TransportChannel   *int   `json:"transportChannel,omitempty"`
 	Data               string `json:"data,omitempty"`
 	Error              string `json:"error,omitempty"`
 }
@@ -114,6 +116,7 @@ type bleWriteRequest struct {
 	ServiceUUID        string `json:"serviceUuid"`
 	CharacteristicUUID string `json:"characteristicUuid"`
 	Data               string `json:"data"`
+	TransportChannel   *int   `json:"transportChannel,omitempty"`
 }
 
 type bleSubscribeRequest struct {
@@ -264,7 +267,7 @@ func (m *bleManager) handleWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := m.writeCharacteristic(req.ServiceUUID, req.CharacteristicUUID, payload); err != nil {
+	if err := m.writeCharacteristic(req.ServiceUUID, req.CharacteristicUUID, payload, req.TransportChannel); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -611,6 +614,7 @@ func (m *bleManager) connect(address string) (bleDeviceInfo, error) {
 		connectedAt: time.Now(),
 		charCache:   make(map[string]bluetooth.DeviceCharacteristic),
 		notifyState: make(map[string]bool),
+		transport:   newBLETransportState(),
 	}
 	m.mu.Unlock()
 
@@ -659,31 +663,8 @@ func (m *bleManager) state() bleStateResponse {
 	}
 }
 
-func (m *bleManager) writeCharacteristic(serviceUUID, characteristicUUID string, payload []byte) error {
-	conn, err := m.requireConnection()
-	if err != nil {
-		return err
-	}
-	if err := m.waitForConnectionReady(conn); err != nil {
-		return err
-	}
-
-	conn.opMu.Lock()
-	defer conn.opMu.Unlock()
-
-	char, key, err := m.getCharacteristicLocked(conn, serviceUUID, characteristicUUID)
-	if err != nil {
-		return err
-	}
-
-	if _, err := char.WriteWithoutResponse(payload); err == nil {
-		return nil
-	}
-	if _, err := char.Write(payload); err == nil {
-		return nil
-	} else {
-		return fmt.Errorf("写入特征失败 %s: %w", key, err)
-	}
+func (m *bleManager) writeCharacteristic(serviceUUID, characteristicUUID string, payload []byte, transportChannel *int) error {
+	return m.writeCharacteristicAuto(serviceUUID, characteristicUUID, payload, transportChannel)
 }
 
 func (m *bleManager) enableNotifications(serviceUUID, characteristicUUID string) error {
@@ -698,6 +679,10 @@ func (m *bleManager) enableNotifications(serviceUUID, characteristicUUID string)
 	conn.opMu.Lock()
 	defer conn.opMu.Unlock()
 
+	return m.enableNotificationsLocked(conn, serviceUUID, characteristicUUID)
+}
+
+func (m *bleManager) enableNotificationsLocked(conn *bleConnection, serviceUUID, characteristicUUID string) error {
 	char, key, err := m.getCharacteristicLocked(conn, serviceUUID, characteristicUUID)
 	if err != nil {
 		return err
@@ -717,6 +702,11 @@ func (m *bleManager) enableNotifications(serviceUUID, characteristicUUID string)
 
 	if err := char.EnableNotifications(func(buf []byte) {
 		copyBuf := append([]byte(nil), buf...)
+		if normalizedServiceUUID == uuidSvcSatellai && normalizedCharUUID == uuidCharTP {
+			if m.handleTransportNotification(conn, char, copyBuf) {
+				return
+			}
+		}
 		m.broadcast(bleEvent{
 			Type:               "notification",
 			Timestamp:          time.Now().Format(time.RFC3339Nano),
@@ -731,6 +721,14 @@ func (m *bleManager) enableNotifications(serviceUUID, characteristicUUID string)
 	}
 
 	conn.notifyState[key] = true
+
+	if normalizedServiceUUID == uuidSvcSatellai && normalizedCharUUID != uuidCharTP {
+		if _, ok := charToTransportChannel[normalizedCharUUID]; ok {
+			if _, _, err := m.ensureTransportNotificationsLocked(conn); err != nil && !errors.Is(err, errTransportUnavailable) {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
