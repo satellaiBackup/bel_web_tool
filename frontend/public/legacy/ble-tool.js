@@ -662,15 +662,19 @@
                 }
             });
 
-            await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharTransport, event => {
-                const text = new TextDecoder().decode(event.target.value);
-                const channel = event.target.transportChannel;
-                const appLbl = document.getElementById('appCmdRspLog');
-                if (appLbl) {
-                    appendLogLine(appLbl, `TP[CH=${channel ?? '?'}]: ${text}`, '>');
-                    appLbl.scrollTop = appLbl.scrollHeight;
-                }
-            });
+            try {
+                await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharTransport, event => {
+                    const text = new TextDecoder().decode(event.target.value);
+                    const channel = event.target.transportChannel;
+                    const appLbl = document.getElementById('appCmdRspLog');
+                    if (appLbl) {
+                        appendLogLine(appLbl, `TP[CH=${channel ?? '?'}]: ${text}`, '>');
+                        appLbl.scrollTop = appLbl.scrollHeight;
+                    }
+                });
+            } catch (error) {
+                console.warn('[WARN] 设备未开放 BLE TRANSPORT 特征，已按老固件小包模式继续:', error);
+            }
 
             await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharDfu, event => {
                 if (resolveDfu) {
