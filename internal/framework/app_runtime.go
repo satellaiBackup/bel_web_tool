@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -39,7 +40,7 @@ func RunLocalWebApp(config AppConfig, registerRoutes BusinessRouteRegistrar) err
 		registerRoutes(mux)
 	}
 
-	mux.Handle("/", http.FileServer(http.Dir(staticRoot)))
+	mux.Handle("/", handleStatic(staticRoot))
 
 	server := &http.Server{Handler: loggingMiddleware(mux)}
 	trayOptions := TrayOptions{
@@ -87,6 +88,18 @@ func handleManifest(staticRoot, manifestPath string) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
 		http.ServeFile(w, r, filepath.Join(staticRoot, manifestPath))
 	}
+}
+
+func handleStatic(staticRoot string) http.Handler {
+	fileServer := http.FileServer(http.Dir(staticRoot))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/legacy/") {
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 func isExistingInstance(config AppConfig, addr string) bool {

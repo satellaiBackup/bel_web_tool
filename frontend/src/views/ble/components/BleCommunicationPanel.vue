@@ -19,6 +19,13 @@ const ntnStatusMetrics = [
   { label: "Last Error", id: "ntnErrValue" }
 ];
 
+const esimStatusMetrics = [
+  { label: "Status", id: "esimStatusValue" },
+  { label: "Chunk", id: "esimChunkLimitValue" },
+  { label: "Offset", id: "esimOffsetValue" },
+  { label: "Result", id: "esimResultValue" }
+];
+
 const currentSmsId = ref(randomSmsId());
 
 function randomSmsId(): number {
@@ -39,7 +46,7 @@ function sendNtnSms(): void {
     <div class="section-heading">
       <p class="eyebrow">Communication</p>
       <h2>通讯</h2>
-      <span>卫星短报文、NTN 模式、状态查询和调试环境配置。</span>
+      <span>卫星短报文、NTN 模式、eSIM 下载和调试环境配置。</span>
     </div>
 
     <article id="ntnSmsSection" class="admin-card ntn-workspace">
@@ -195,6 +202,151 @@ function sendNtnSms(): void {
         </div>
       </div>
     </article>
+
+    <article id="esimDownloadSection" class="admin-card esim-workspace">
+      <div class="card-heading split esim-heading">
+        <div>
+          <h3>eSIM 下发</h3>
+          <p>启动 profile 下载，并自动处理中途的 HTTPS 请求与响应体分块回传。</p>
+        </div>
+        <div id="esimMessage" class="message-line"></div>
+      </div>
+
+      <div class="esim-layout">
+        <section class="esim-panel esim-start-panel">
+          <div class="esim-panel-title">
+            <span>下载参数</span>
+          </div>
+          <div class="form-list">
+            <label class="form-field">
+              <span>激活码 AC</span>
+              <div class="textarea-wrap">
+                <textarea
+                  id="esimActivationCode"
+                  class="cmd cmd-input cmd-textarea admin-input"
+                  rows="4"
+                  maxlength="256"
+                  placeholder="LPA 激活码"
+                  disabled
+                ></textarea>
+                <span><b id="esimActivationByteCount">0</b>/256 bytes</span>
+              </div>
+            </label>
+            <div class="inline-controls">
+              <input
+                id="esimConfirmationCode"
+                type="text"
+                class="cmd cmd-input admin-input"
+                maxlength="40"
+                placeholder="确认码 CC，可选"
+                disabled
+              />
+              <button
+                class="cmd cmd-button"
+                disabled
+                @click="bridge.call('handleEsimStart')"
+              >
+                开始下载
+              </button>
+              <button
+                class="cmd cmd-button secondary"
+                disabled
+                @click="bridge.call('handleEsimCancel')"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section class="esim-panel">
+          <div class="esim-panel-title">
+            <span>会话状态</span>
+          </div>
+          <div id="esimStatusDisplay" class="metric-grid esim-metrics">
+            <div
+              v-for="metric in esimStatusMetrics"
+              :key="metric.id"
+              class="metric-card"
+            >
+              <span>{{ metric.label }}</span>
+              <strong :id="metric.id">-</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="esim-panel">
+          <div class="esim-panel-title">
+            <span>Profile 管理</span>
+          </div>
+          <div class="inline-controls">
+            <input
+              id="esimIccid"
+              type="text"
+              class="cmd cmd-input admin-input"
+              maxlength="32"
+              placeholder="ICCID"
+              disabled
+            />
+            <button
+              class="cmd cmd-button secondary"
+              disabled
+              @click="bridge.call('handleEsimList')"
+            >
+              查询列表
+            </button>
+            <button
+              class="cmd cmd-button"
+              disabled
+              @click="bridge.call('handleEsimEnable')"
+            >
+              启用
+            </button>
+            <button
+              class="cmd cmd-button danger"
+              disabled
+              @click="bridge.call('handleEsimDelete')"
+            >
+              删除
+            </button>
+          </div>
+        </section>
+
+        <section class="esim-panel">
+          <div class="esim-panel-title">
+            <span>Profile 列表</span>
+          </div>
+          <div id="esimListResult" class="result-panel esim-list-result"></div>
+        </section>
+      </div>
+
+      <div class="admin-grid three-columns slim-gap esim-log-layout">
+        <BleLogPanel
+          title="eSIM 命令日志"
+          panel-id="esimCmdRspLog"
+          size="small"
+          :focused-log-id="focusedLogId"
+          :clear-panel="bridge.clearPanel"
+          :focus-log="bridge.focusLog"
+        />
+        <BleLogPanel
+          title="eSIM 事件日志"
+          panel-id="esimEventLog"
+          size="small"
+          :focused-log-id="focusedLogId"
+          :clear-panel="bridge.clearPanel"
+          :focus-log="bridge.focusLog"
+        />
+        <BleLogPanel
+          title="eSIM HTTPS 日志"
+          panel-id="esimHttpLog"
+          size="small"
+          :focused-log-id="focusedLogId"
+          :clear-panel="bridge.clearPanel"
+          :focus-log="bridge.focusLog"
+        />
+      </div>
+    </article>
   </section>
 </template>
 
@@ -290,16 +442,78 @@ function sendNtnSms(): void {
   min-width: 0;
 }
 
+.esim-workspace {
+  order: -1;
+  gap: 16px;
+}
+
+.esim-heading {
+  padding-bottom: 2px;
+}
+
+.esim-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.esim-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--ble-border-soft);
+  border-radius: 8px;
+  background: var(--ble-surface-soft);
+}
+
+.esim-start-panel {
+  grid-row: span 2;
+}
+
+.esim-panel-title {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+
+  span {
+    color: var(--ble-text);
+    font-size: 14px;
+    font-weight: 900;
+  }
+}
+
+.esim-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.esim-list-result {
+  min-height: 88px;
+}
+
+.esim-log-layout {
+  min-width: 0;
+}
+
 @media (width <= 1280px) {
   .ntn-layout,
+  .esim-layout,
   .ntn-status-panel,
   .ntn-compose-panel {
     grid-template-columns: 1fr;
     grid-column: auto;
   }
 
-  .ntn-metrics {
+  .ntn-metrics,
+  .esim-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .esim-start-panel {
+    grid-row: auto;
   }
 }
 

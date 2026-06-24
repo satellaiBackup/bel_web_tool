@@ -341,6 +341,13 @@
                     console.error('[ERROR] 解析通知事件失败:', error);
                 }
             });
+            bleEventSource.addEventListener('transport_debug', event => {
+                try {
+                    appendBleTransportDebugLog(JSON.parse(event.data));
+                } catch (error) {
+                    console.error('[ERROR] 解析大包传输调试事件失败:', error);
+                }
+            });
             bleEventSource.addEventListener('disconnected', event => {
                 try {
                     peripheral.handleBackendDisconnect(JSON.parse(event.data));
@@ -356,6 +363,7 @@
         class Peripheral {
             constructor() {
                 this.device = null;
+                this.transportReady = false;
                 this.notificationListeners = new Map();
                 this.notificationSubscriptions = new Set();
                 this.onDisconnected = this.onDisconnected.bind(this);
@@ -390,6 +398,7 @@
                         connected: true
                     }
                 };
+                this.transportReady = false;
                 console.log('[INFO]CONNECTED');
                 setConnectionStatus(`已连接 · ${formatConnectedDeviceLabel(this.device)}`, 'green');
                 setBleConnectionControls(true);
@@ -417,6 +426,8 @@
                 document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
                 this.notificationListeners.clear();
                 this.notificationSubscriptions.clear();
+                this.transportReady = false;
+                appJsonFragmentBuffers.clear();
                 this.device = null;
             }
 
@@ -566,7 +577,9 @@
 
         const DEFAULT_APP_RESPONSE_TIMEOUT = 400;
         const DEFAULT_APP_RESPONSE_MAX_WAIT = 5000;
+        const APP_JSON_FRAGMENT_BUFFER_MAX_BYTES = 16 * 1024;
         let pendingAppResponse = null;
+        const appJsonFragmentBuffers = new Map();
         const pendingCommands = new Map();
         let commandIdCounter = 0;
 
@@ -594,9 +607,104 @@
             resolve(buffer);
         }
 
+        function appendAppDebugLog(message) {
+            const log = document.getElementById('appCmdRspLog');
+            if (!log) return;
+            appendLogLine(log, message, '>');
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function handleAppJsonNotificationText(text, source = 'APP') {
+            const responses = dispatchEsimPayloads(parseBufferedJsonResponses(text, source), source);
+            responses.forEach(response => {
+                if (response.e !== undefined) {
+                    const eventLbl = document.getElementById('eventMessagesLog');
+                    if (eventLbl) {
+                        appendLogLine(eventLbl, JSON.stringify(response), '>');
+                        eventLbl.scrollTop = eventLbl.scrollHeight;
+                    }
+
+                    if (response.e === 'wifi-scan') {
+                        handleWifiScanEvent(response);
+                    }
+
+                    if (response.e === 'ntn_state' || response.e === 'ntn_sms_tx' || response.e === 'ntn_sms_rx') {
+                        handleNtnEvent(response);
+                    }
+                }
+            });
+            return responses;
+        }
+
+        function appendBleTransportDebugLog(payload) {
+            const debug = payload && payload.transportDebug;
+            if (!debug) return;
+
+            const log = document.getElementById('appCmdRspLog');
+            if (!log) return;
+
+            const parts = [
+                `TP-RX ${debug.phase || 'frame'}`,
+                `ch=${debug.channel}`,
+                `msg=${debug.msgId}`,
+                `seq=${debug.seq}`,
+                `sof=${debug.sof ? 1 : 0}`,
+                `eof=${debug.eof ? 1 : 0}`,
+                `frame=${debug.frameLen}`,
+            ];
+            if (debug.chunkLen !== undefined) parts.push(`chunk=${debug.chunkLen}`);
+            if (debug.total !== undefined && debug.total !== 0) parts.push(`got=${debug.got || 0}/${debug.total}`);
+            if (debug.status) parts.push(`status=${debug.status}`);
+
+            appendLogLine(log, parts.join(' '), '>');
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function handleBleTransportNotification(event) {
+            const text = new TextDecoder().decode(event.target.value);
+            const channel = event.target.transportChannel;
+            const appLbl = document.getElementById('appCmdRspLog');
+            if (appLbl) {
+                appendLogLine(appLbl, `TP[CH=${channel ?? '?'}]: ${text}`, '>');
+                appLbl.scrollTop = appLbl.scrollHeight;
+            }
+            if (channel === 3 || channel === 6) {
+                try {
+                    handleAppJsonNotificationText(text, `TP[CH=${channel}]`);
+                } catch (error) {
+                    console.debug('解析 TRANSPORT eSIM 事件失败:', error);
+                }
+            }
+        }
+
+        async function ensureBleTransportNotifications() {
+            await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharTransport, handleBleTransportNotification);
+            peripheral.transportReady = true;
+        }
+
         async function startDefaultBleNotifications() {
             peripheral.notificationListeners.clear();
             peripheral.notificationSubscriptions.clear();
+            peripheral.transportReady = false;
+            appJsonFragmentBuffers.clear();
+
+            try {
+                await ensureBleTransportNotifications();
+                console.info('[BLE] transport ccc subscribed');
+                const appLbl = document.getElementById('appCmdRspLog');
+                if (appLbl) {
+                    appendLogLine(appLbl, 'TRANSPORT CCC subscribed: 0000000e-ffff-4fff-8fff-5a7e11a1ffff', '>');
+                    appLbl.scrollTop = appLbl.scrollHeight;
+                }
+            } catch (error) {
+                peripheral.transportReady = false;
+                console.warn('[WARN] 设备未开放 BLE TRANSPORT 特征，已按老固件小包模式继续:', error);
+                const appLbl = document.getElementById('appCmdRspLog');
+                if (appLbl) {
+                    appendLogLine(appLbl, `TRANSPORT CCC subscribe failed: ${error.message || error}`, '>');
+                    appLbl.scrollTop = appLbl.scrollHeight;
+                }
+            }
 
             await peripheral.startCmdNotifications(uuidSvcNus, uuidCharNotify, event => {
                 const text = new TextDecoder().decode(event.target.value);
@@ -622,33 +730,18 @@
 
             await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharApp, event => {
                 const text = new TextDecoder().decode(event.target.value);
+                const channel = event.target.transportChannel;
+                const source = channel === undefined || channel === null ? 'APP' : `TP[CH=${channel}]`;
                 const isWaitingForAppResponse = Boolean(pendingAppResponse);
 
                 const appLbl = document.getElementById('appCmdRspLog');
                 if (appLbl && !isWaitingForAppResponse) {
-                    appendLogLine(appLbl, text, '>');
+                    appendLogLine(appLbl, source === 'APP' ? text : `${source}: ${text}`, '>');
                     appLbl.scrollTop = appLbl.scrollHeight;
                 }
 
                 try {
-                    const responses = parseMultipleJsonResponses(text);
-                    responses.forEach(response => {
-                        if (response.e !== undefined) {
-                            const eventLbl = document.getElementById('eventMessagesLog');
-                            if (eventLbl) {
-                                appendLogLine(eventLbl, JSON.stringify(response), '>');
-                                eventLbl.scrollTop = eventLbl.scrollHeight;
-                            }
-
-                            if (response.e === 'wifi-scan') {
-                                handleWifiScanEvent(response);
-                            }
-
-                            if (response.e === 'ntn_state' || response.e === 'ntn_sms_tx' || response.e === 'ntn_sms_rx') {
-                                handleNtnEvent(response);
-                            }
-                        }
-                    });
+                    handleAppJsonNotificationText(text, source);
                 } catch (error) {
                     console.debug('解析事件失败:', error);
                 }
@@ -661,20 +754,6 @@
                     }, pendingAppResponse.inactivityMs);
                 }
             });
-
-            try {
-                await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharTransport, event => {
-                    const text = new TextDecoder().decode(event.target.value);
-                    const channel = event.target.transportChannel;
-                    const appLbl = document.getElementById('appCmdRspLog');
-                    if (appLbl) {
-                        appendLogLine(appLbl, `TP[CH=${channel ?? '?'}]: ${text}`, '>');
-                        appLbl.scrollTop = appLbl.scrollHeight;
-                    }
-                });
-            } catch (error) {
-                console.warn('[WARN] 设备未开放 BLE TRANSPORT 特征，已按老固件小包模式继续:', error);
-            }
 
             await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharDfu, event => {
                 if (resolveDfu) {
@@ -1274,6 +1353,19 @@
             return globalThis.__ntnCommandOptions;
         }
 
+        function getEsimCommandOptions() {
+            if (!globalThis.__esimCommandOptions) {
+                globalThis.__esimCommandOptions = {
+                    containerSelector: '#esimDownloadSection',
+                    logElementId: 'esimCmdRspLog',
+                    labelPrefix: 'ESIM',
+                    responseTimeout: 800,
+                    maxWait: 30000
+                };
+            }
+            return globalThis.__esimCommandOptions;
+        }
+
         const ntnStateMap = {
             0: 'IDLE',
             1: 'POWERING_ON',
@@ -1554,29 +1646,47 @@
         }
 
         function parseMultipleJsonResponses(str) {
-            if (typeof str !== 'string') return [];
-            
+            return parseMultipleJsonResponsesWithRemainder(str).results;
+        }
+
+        function parseMultipleJsonResponsesWithRemainder(str) {
+            if (typeof str !== 'string') return { results: [], remainder: '' };
+
             const results = [];
             let currentPos = 0;
-            
+
             while (currentPos < str.length) {
                 // 跳过空白字符
                 while (currentPos < str.length && /\s/.test(str[currentPos])) {
                     currentPos++;
                 }
-                
+
                 if (currentPos >= str.length) break;
-                
+
                 // 寻找JSON对象的开始
                 if (str[currentPos] === '{') {
                     let braceCount = 0;
+                    let inString = false;
+                    let escaped = false;
                     let jsonStart = currentPos;
-                    
+                    let complete = false;
+
                     // 找到完整的JSON对象
                     while (currentPos < str.length) {
-                        if (str[currentPos] === '{') {
+                        const char = str[currentPos];
+                        if (inString) {
+                            if (escaped) {
+                                escaped = false;
+                            } else if (char === '\\') {
+                                escaped = true;
+                            } else if (char === '"') {
+                                inString = false;
+                            }
+                        } else if (char === '"') {
+                            inString = true;
+                        } else if (char === '{') {
                             braceCount++;
-                        } else if (str[currentPos] === '}') {
+                        } else if (char === '}') {
                             braceCount--;
                             if (braceCount === 0) {
                                 // 找到完整的JSON对象
@@ -1586,17 +1696,785 @@
                                     results.push(parsed);
                                 }
                                 currentPos++;
+                                complete = true;
                                 break;
                             }
                         }
                         currentPos++;
                     }
+                    if (!complete) {
+                        return { results, remainder: str.substring(jsonStart) };
+                    }
                 } else {
                     currentPos++;
                 }
             }
-            
+
+            return { results, remainder: '' };
+        }
+
+        function parseBufferedJsonResponses(text, source = 'APP') {
+            const key = source || 'APP';
+            const previous = appJsonFragmentBuffers.get(key);
+            const hadPrevious = Boolean(previous && previous.text);
+            const combined = `${previous?.text || ''}${text || ''}`;
+            const { results, remainder } = parseMultipleJsonResponsesWithRemainder(combined);
+
+            if (remainder) {
+                const bytes = utf8ByteLength(remainder);
+                if (bytes > APP_JSON_FRAGMENT_BUFFER_MAX_BYTES) {
+                    appJsonFragmentBuffers.delete(key);
+                    appendAppDebugLog(`RAW JSON fragment dropped source=${key} bytes=${bytes} reason=overflow`);
+                } else {
+                    appJsonFragmentBuffers.set(key, {
+                        text: remainder,
+                        updatedAt: Date.now()
+                    });
+                    appendAppDebugLog(`RAW JSON fragment buffered source=${key} bytes=${bytes}`);
+                }
+            } else if (hadPrevious) {
+                appJsonFragmentBuffers.delete(key);
+            }
+
+            if (hadPrevious && results.length > 0) {
+                appendAppDebugLog(`RAW JSON reassembled source=${key} count=${results.length} remainder=${remainder ? utf8ByteLength(remainder) : 0}`);
+            }
+
             return results;
+        }
+
+        let esimEventWaiters = [];
+        const ESIM_DEFAULT_CHUNK_LIMIT = 512;
+        const ESIM_ACTIVATION_CODE_MAX_BYTES = 256;
+        const ESIM_CONFIRMATION_CODE_MAX_BYTES = 40;
+        const ESIM_RELAY_CLIENT_ID = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        const ESIM_RELAY_OWNER_KEY = 'ble_web_tool.esim.relay.owner';
+        const ESIM_RELAY_REQUEST_PREFIX = 'ble_web_tool.esim.relay.request.';
+        const ESIM_RELAY_LOCK_TTL_MS = 10 * 60 * 1000;
+        const esimDownloadState = {
+            chunkLimit: ESIM_DEFAULT_CHUNK_LIMIT,
+            requestId: null,
+            total: 0,
+            lastAckOffset: 0,
+            smdpAddress: '',
+            relaying: false,
+            relayQueue: Promise.resolve(),
+            abortController: null,
+            handledHttpsRequests: new Set()
+        };
+
+        function setEsimMessage(message, color = '#4b5563') {
+            const el = document.getElementById('esimMessage');
+            if (!el) return;
+            el.textContent = message || '';
+            el.style.color = color;
+        }
+
+        function appendEsimLog(logId, message, direction = '>') {
+            const log = document.getElementById(logId);
+            if (!log) return;
+            appendLogLine(log, message, direction);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function appendEsimEventLog(payload) {
+            appendEsimLog('esimEventLog', JSON.stringify(payload), '>');
+        }
+
+        function makeEsimFlowStopError(message) {
+            const error = new Error(message);
+            error.esimFlowStop = true;
+            return error;
+        }
+
+        function hashText(text) {
+            let hash = 2166136261;
+            for (let i = 0; i < text.length; i += 1) {
+                hash ^= text.charCodeAt(i);
+                hash = Math.imul(hash, 16777619);
+            }
+            return (hash >>> 0).toString(36);
+        }
+
+        function readJsonStorage(key) {
+            try {
+                const raw = localStorage.getItem(key);
+                return raw ? JSON.parse(raw) : null;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function writeJsonStorage(key, value) {
+            try {
+                localStorage.setItem(key, JSON.stringify(value));
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        function claimEsimRelayOwnership(reason = 'relay', force = false) {
+            const now = Date.now();
+            const current = readJsonStorage(ESIM_RELAY_OWNER_KEY);
+            const ownedByOther = current
+                && current.owner
+                && current.owner !== ESIM_RELAY_CLIENT_ID
+                && now - Number(current.updatedAt || 0) < ESIM_RELAY_LOCK_TTL_MS;
+            if (ownedByOther && !force) return false;
+
+            const next = {
+                owner: ESIM_RELAY_CLIENT_ID,
+                updatedAt: now,
+                reason
+            };
+            if (!writeJsonStorage(ESIM_RELAY_OWNER_KEY, next)) return true;
+
+            const confirmed = readJsonStorage(ESIM_RELAY_OWNER_KEY);
+            return !confirmed || confirmed.owner === ESIM_RELAY_CLIENT_ID;
+        }
+
+        function refreshEsimRelayOwnership(reason = 'relay') {
+            claimEsimRelayOwnership(reason, true);
+        }
+
+        function releaseEsimRelayOwnership() {
+            const current = readJsonStorage(ESIM_RELAY_OWNER_KEY);
+            if (!current || current.owner !== ESIM_RELAY_CLIENT_ID) return;
+            try {
+                localStorage.removeItem(ESIM_RELAY_OWNER_KEY);
+            } catch (_) {
+                // Ignore storage cleanup failures.
+            }
+        }
+
+        function clearEsimRelayRequestLocks() {
+            try {
+                for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+                    const key = localStorage.key(i);
+                    if (key && key.startsWith(ESIM_RELAY_REQUEST_PREFIX)) {
+                        localStorage.removeItem(key);
+                    }
+                }
+            } catch (_) {
+                // Ignore storage cleanup failures.
+            }
+        }
+
+        function makeEsimRelayRequestKey(request) {
+            const body = request?.body === undefined || request?.body === null ? '' : String(request.body);
+            const url = String(request?.url || '');
+            const smdp = String(request?.smdpAddress || request?.smdp || esimDownloadState.smdpAddress || '');
+            const id = String(request?.id ?? '');
+            const signature = JSON.stringify({ id, url, smdp, body });
+            return `${id || '-'}-${hashText(signature)}`;
+        }
+
+        function claimEsimRelayRequest(key, request) {
+            const now = Date.now();
+            const storageKey = `${ESIM_RELAY_REQUEST_PREFIX}${key}`;
+            const current = readJsonStorage(storageKey);
+            const ownedByOther = current
+                && current.owner
+                && current.owner !== ESIM_RELAY_CLIENT_ID
+                && now - Number(current.updatedAt || 0) < ESIM_RELAY_LOCK_TTL_MS;
+            if (ownedByOther) return false;
+
+            const next = {
+                owner: ESIM_RELAY_CLIENT_ID,
+                updatedAt: now,
+                id: request?.id ?? null,
+                url: request?.url || '',
+                bodyBytes: utf8ByteLength(request?.body || '')
+            };
+            if (!writeJsonStorage(storageKey, next)) return true;
+
+            const confirmed = readJsonStorage(storageKey);
+            return !confirmed || confirmed.owner === ESIM_RELAY_CLIENT_ID;
+        }
+
+        function getEsimPayloadName(payload) {
+            if (!payload || typeof payload !== 'object') return '';
+            if (typeof payload.c === 'string') return payload.c;
+            if (typeof payload.e === 'string') return payload.e;
+            return '';
+        }
+
+        function getEsimPayloadCode(payload) {
+            if (!payload || typeof payload !== 'object') return undefined;
+            if (payload.c && payload.e !== undefined && typeof payload.e !== 'string') {
+                const code = Number(payload.e);
+                return Number.isFinite(code) ? code : payload.e;
+            }
+            const result = payload.r;
+            if (result && typeof result === 'object' && result.code !== undefined) {
+                const code = Number(result.code);
+                return Number.isFinite(code) ? code : result.code;
+            }
+            return undefined;
+        }
+
+        function getEsimAckOffset(payload) {
+            const result = payload && payload.r;
+            if (result && typeof result === 'object') {
+                return Number(result.offset);
+            }
+            return Number(result);
+        }
+
+        function removeEsimEventWaiter(waiter) {
+            if (!waiter) return;
+            if (waiter.timer) clearTimeout(waiter.timer);
+            esimEventWaiters = esimEventWaiters.filter(item => item !== waiter);
+        }
+
+        function rejectEsimEventWaiters(error, eventName = '') {
+            const waiters = [...esimEventWaiters];
+            waiters.forEach(waiter => {
+                if (eventName && waiter.eventName !== eventName) return;
+                removeEsimEventWaiter(waiter);
+                waiter.reject(error);
+            });
+        }
+
+        function waitForEsimEvent(eventName, predicate, timeoutMs = 30000) {
+            let waiter = null;
+            const promise = new Promise((resolve, reject) => {
+                waiter = {
+                    eventName,
+                    predicate: typeof predicate === 'function' ? predicate : () => true,
+                    resolve,
+                    reject,
+                    timer: setTimeout(() => {
+                        removeEsimEventWaiter(waiter);
+                        reject(new Error(`等待 ${eventName} 事件超时`));
+                    }, timeoutMs)
+                };
+                esimEventWaiters.push(waiter);
+            });
+            return {
+                promise,
+                cancel() {
+                    removeEsimEventWaiter(waiter);
+                }
+            };
+        }
+
+        function notifyEsimEventWaiters(payload) {
+            const eventName = getEsimPayloadName(payload);
+            if (!eventName || esimEventWaiters.length === 0) return;
+
+            const waiters = [...esimEventWaiters];
+            waiters.forEach(waiter => {
+                if (waiter.eventName !== eventName) return;
+                let matched = false;
+                try {
+                    matched = waiter.predicate(payload);
+                } catch (error) {
+                    removeEsimEventWaiter(waiter);
+                    waiter.reject(error);
+                    return;
+                }
+                if (!matched) return;
+                removeEsimEventWaiter(waiter);
+                waiter.resolve(payload);
+            });
+        }
+
+        function dispatchEsimPayloads(responses, source = 'APP') {
+            responses.forEach(response => {
+                const eventName = getEsimPayloadName(response);
+                if (eventName.startsWith('esim.')) {
+                    console.info(`[eSIM] ${source} event`, response);
+                    handleEsimEvent(response);
+                    notifyEsimEventWaiters(response);
+                }
+            });
+            return responses;
+        }
+
+        function dispatchEsimPayloadsFromText(text, source = 'APP') {
+            return dispatchEsimPayloads(parseMultipleJsonResponses(text), source);
+        }
+
+        function setEsimMetric(id, value) {
+            setTextById(id, value === undefined || value === null || value === '' ? '-' : String(value));
+        }
+
+        function updateEsimActivationByteCount() {
+            const input = document.getElementById('esimActivationCode');
+            const counter = document.getElementById('esimActivationByteCount');
+            if (!input || !counter) return;
+            const bytes = utf8ByteLength(input.value);
+            counter.textContent = bytes;
+            counter.className = bytes > ESIM_ACTIVATION_CODE_MAX_BYTES ? 'text-red-600 font-semibold' : '';
+        }
+
+        function parseSmdpAddressFromActivationCode(ac) {
+            const parts = String(ac || '').trim().split('$');
+            if (parts.length >= 3 && /^LPA:/i.test(parts[0])) {
+                return (parts[1] || '').trim();
+            }
+            return '';
+        }
+
+        function resetEsimProgress() {
+            esimDownloadState.requestId = null;
+            esimDownloadState.total = 0;
+            esimDownloadState.lastAckOffset = 0;
+            esimDownloadState.smdpAddress = '';
+            esimDownloadState.handledHttpsRequests.clear();
+            setEsimMetric('esimOffsetValue', '0/0');
+            setEsimMetric('esimResultValue', '-');
+        }
+
+        function renderEsimResult(result) {
+            const code = result && typeof result === 'object' ? result.code : result;
+            const iccid = result && typeof result === 'object' ? result.iccid : '';
+            setEsimMetric('esimResultValue', code !== undefined ? code : '-');
+            if (iccid) {
+                const iccidInput = document.getElementById('esimIccid');
+                if (iccidInput) iccidInput.value = iccid;
+            }
+        }
+
+        function renderEsimList(payload) {
+            const container = document.getElementById('esimListResult');
+            if (!container) return;
+            const value = payload && payload.r !== undefined ? payload.r : payload;
+            if (typeof value === 'string') {
+                container.textContent = value;
+            } else if (value && typeof value === 'object' && typeof value.list === 'string') {
+                container.textContent = value.list;
+            } else {
+                container.textContent = JSON.stringify(value, null, 2);
+            }
+        }
+
+        function esimCommandErrorText(payload, commandName) {
+            if (!payload) return `${commandName} 未收到响应`;
+            if (payload.c && payload.e !== undefined) return `${commandName} 失败: ${payload.m || payload.e}`;
+            const code = getEsimPayloadCode(payload);
+            if (code !== undefined && code !== 0) return `${commandName} 失败: ${payload.m || code}`;
+            return '';
+        }
+
+        async function sendEsimCommand(command, commandName, options = {}) {
+            const rsp = await sendAppCommandViaBle(
+                JSON.stringify(command),
+                { ...getEsimCommandOptions(), ...options }
+            );
+            if (!rsp) return null;
+            dispatchEsimPayloadsFromText(rsp, `RESP(${commandName})`);
+            return parseFirstCommandResponse(rsp, commandName);
+        }
+
+        async function sendEsimCommandNoResponse(command) {
+            const jsonString = JSON.stringify(command);
+            const logElement = document.getElementById('esimCmdRspLog');
+
+            if (!isDeviceConnected()) {
+                const message = '设备未连接';
+                setConnectionStatus("设备未连接 (Device not connected)", 'red');
+                if (logElement) {
+                    appendLog(logElement, `ERROR(ESIM): ${message}\n`, '>');
+                    logElement.scrollTop = logElement.scrollHeight;
+                }
+                throw new Error(message);
+            }
+
+            if (logElement) {
+                appendLog(logElement, `SENT(ESIM): ${jsonString}\n`, '<');
+                logElement.scrollTop = logElement.scrollHeight;
+            }
+
+            await peripheral.sendCmd(uuidSvcSatellai, uuidCharApp, jsonString);
+        }
+
+        async function sendEsimDataChunk(command, id, offset, timeoutMs = 30000) {
+            const waiter = waitForEsimEvent('esim.data', payload => {
+                if (payload.c === 'esim.data' && payload.e !== undefined) return true;
+                if (payload.e !== 'esim.data') return false;
+
+                const result = payload.r;
+                if (result && typeof result === 'object') {
+                    if (result.id !== undefined && Number(result.id) !== id) return false;
+                    const code = getEsimPayloadCode(payload);
+                    if (code !== undefined && code !== 0) return true;
+                    return Number.isFinite(Number(result.offset)) && Number(result.offset) > offset;
+                }
+
+                return Number.isFinite(Number(result)) && Number(result) > offset;
+            }, timeoutMs);
+
+            try {
+                await sendEsimCommandNoResponse(command);
+                return await waiter.promise;
+            } catch (error) {
+                waiter.cancel();
+                throw error;
+            }
+        }
+
+        async function handleEsimStart() {
+            const acInput = document.getElementById('esimActivationCode');
+            const ccInput = document.getElementById('esimConfirmationCode');
+            const ac = (acInput?.value || '').trim();
+            const cc = (ccInput?.value || '').trim();
+            const acBytes = utf8ByteLength(ac);
+            const ccBytes = utf8ByteLength(cc);
+
+            if (!ac) {
+                setEsimMessage('请输入 eSIM 激活码 AC。', '#dc2626');
+                acInput && acInput.focus();
+                return;
+            }
+            if (acBytes > ESIM_ACTIVATION_CODE_MAX_BYTES) {
+                setEsimMessage(`AC 不能超过 ${ESIM_ACTIVATION_CODE_MAX_BYTES} 字节。`, '#dc2626');
+                acInput && acInput.focus();
+                updateEsimActivationByteCount();
+                return;
+            }
+            if (ccBytes > ESIM_CONFIRMATION_CODE_MAX_BYTES) {
+                setEsimMessage(`CC 不能超过 ${ESIM_CONFIRMATION_CODE_MAX_BYTES} 字节。`, '#dc2626');
+                ccInput && ccInput.focus();
+                return;
+            }
+            const smdpAddress = parseSmdpAddressFromActivationCode(ac);
+            if (!smdpAddress) {
+                setEsimMessage('无法从 AC 解析 SMDP 地址，请检查 LPA:1$地址$... 格式。', '#dc2626');
+                acInput && acInput.focus();
+                return;
+            }
+            if (!peripheral.transportReady) {
+                try {
+                    await ensureBleTransportNotifications();
+                    appendEsimLog('esimCmdRspLog', 'TRANSPORT CCC retry subscribed: 0000000e-ffff-4fff-8fff-5a7e11a1ffff', '>');
+                } catch (error) {
+                    const message = `BLE 大包 TRANSPORT CCC 未订阅成功，请重新连接设备后再开始 eSIM 下载: ${error.message || error}`;
+                    setEsimMessage(message, '#dc2626');
+                    appendEsimLog('esimCmdRspLog', message, '>');
+                    return;
+                }
+            }
+
+            const command = { c: 'esim.start', p: { ac } };
+            if (cc) command.p.cc = cc;
+
+            resetEsimProgress();
+            clearEsimRelayRequestLocks();
+            refreshEsimRelayOwnership('start');
+            esimDownloadState.smdpAddress = smdpAddress;
+            setEsimMetric('esimStatusValue', 'starting');
+            setEsimMetric('esimChunkLimitValue', '-');
+            setEsimMessage(`正在启动 eSIM 下载会话，SMDP=${smdpAddress}...`, '#2563eb');
+
+            const payload = await sendEsimCommand(command, 'esim.start');
+            const errorText = esimCommandErrorText(payload, 'esim.start');
+            if (errorText) {
+                setEsimMessage(errorText, '#dc2626');
+                setEsimMetric('esimStatusValue', 'start failed');
+                return;
+            }
+
+            if (Number.isFinite(Number(payload.r)) && Number(payload.r) > 0) {
+                esimDownloadState.chunkLimit = Number(payload.r);
+                setEsimMetric('esimChunkLimitValue', `${esimDownloadState.chunkLimit} bytes`);
+            }
+            setEsimMessage('eSIM 下载会话已受理，等待 HTTPS 中转请求。', '#16a34a');
+        }
+
+        async function handleEsimCancel() {
+            if (esimDownloadState.abortController) {
+                esimDownloadState.abortController.abort();
+                esimDownloadState.abortController = null;
+            }
+            rejectEsimEventWaiters(makeEsimFlowStopError('eSIM 会话已取消。'));
+
+            setEsimMessage('正在取消 eSIM 会话...', '#2563eb');
+            const payload = await sendEsimCommand({ c: 'esim.cancel' }, 'esim.cancel', { maxWait: 10000 });
+            const errorText = esimCommandErrorText(payload, 'esim.cancel');
+            if (errorText) {
+                setEsimMessage(errorText, '#dc2626');
+                return;
+            }
+            setEsimMetric('esimStatusValue', 'canceling');
+            setEsimMessage('取消命令已发送。', '#16a34a');
+            releaseEsimRelayOwnership();
+        }
+
+        async function handleEsimList() {
+            setEsimMessage('正在查询 eSIM profile 列表...', '#2563eb');
+            const payload = await sendEsimCommand({ c: 'esim.list' }, 'esim.list', { maxWait: 10000 });
+            const errorText = esimCommandErrorText(payload, 'esim.list');
+            if (errorText) {
+                setEsimMessage(errorText, '#dc2626');
+                return;
+            }
+            setEsimMessage('查询已受理，等待列表事件。', '#16a34a');
+        }
+
+        function getEsimIccid() {
+            const input = document.getElementById('esimIccid');
+            return {
+                input,
+                iccid: (input?.value || '').trim()
+            };
+        }
+
+        async function handleEsimEnable() {
+            const { input, iccid } = getEsimIccid();
+            if (!iccid) {
+                setEsimMessage('请输入要启用的 ICCID。', '#dc2626');
+                input && input.focus();
+                return;
+            }
+
+            setEsimMessage(`正在启用 ICCID ${iccid}...`, '#2563eb');
+            const payload = await sendEsimCommand({ c: 'esim.enable', p: { iccid } }, 'esim.enable', { maxWait: 10000 });
+            const errorText = esimCommandErrorText(payload, 'esim.enable');
+            if (errorText) {
+                setEsimMessage(errorText, '#dc2626');
+                return;
+            }
+            setEsimMessage('启用命令已受理，等待最终事件。', '#16a34a');
+        }
+
+        async function handleEsimDelete() {
+            const { input, iccid } = getEsimIccid();
+            if (!iccid) {
+                setEsimMessage('请输入要删除的 ICCID。', '#dc2626');
+                input && input.focus();
+                return;
+            }
+
+            setEsimMessage(`正在删除 ICCID ${iccid}...`, '#dc2626');
+            const payload = await sendEsimCommand({ c: 'esim.delete', p: { iccid } }, 'esim.delete', { maxWait: 10000 });
+            const errorText = esimCommandErrorText(payload, 'esim.delete');
+            if (errorText) {
+                setEsimMessage(errorText, '#dc2626');
+                return;
+            }
+            setEsimMessage('删除命令已受理，等待最终事件。', '#16a34a');
+        }
+
+        function queueEsimHttpsRelay(request) {
+            refreshEsimRelayOwnership('https_relay');
+            appendEsimLog(
+                'esimHttpLog',
+                `QUEUE #${request?.id ?? '-'} ${request?.url || '(empty url)'}`,
+                '>'
+            );
+            console.info('[eSIM] queue HTTPS relay', request);
+            esimDownloadState.relayQueue = esimDownloadState.relayQueue
+                .catch(() => undefined)
+                .then(() => relayEsimHttpsRequest(request))
+                .catch(async error => {
+                    const message = error && error.name === 'AbortError'
+                        ? 'eSIM HTTPS 请求已取消。'
+                        : `eSIM HTTPS 中转失败: ${error.message || error}`;
+                    appendEsimLog('esimHttpLog', message, '>');
+                    setEsimMessage(message, '#dc2626');
+                    if (error && error.name !== 'AbortError' && !error.esimFlowStop && isDeviceConnected()) {
+                        appendEsimLog('esimHttpLog', 'AUTO cancel disabled: 等待设备侧 result 或手动取消。', '>');
+                    }
+                });
+        }
+
+        async function fetchEsimHttpsViaProxy(url, body, smdpAddress, signal) {
+            console.info('[eSIM] fetch local HTTPS relay', { url, smdpAddress, bodyBytes: utf8ByteLength(body) });
+            const response = await fetch('/api/esim/https', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, body, smdpAddress }),
+                signal
+            });
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            if (!response.ok) {
+                let message = new TextDecoder().decode(bytes);
+                try {
+                    const payload = JSON.parse(message);
+                    message = payload.error || message;
+                } catch (_) {
+                    // Keep the raw body.
+                }
+                throw new Error(message || `HTTP ${response.status}`);
+            }
+            return {
+                bytes,
+                status: response.headers.get('X-Esim-HTTP-Status') || '-',
+                contentType: response.headers.get('X-Esim-HTTP-Content-Type') || '-',
+                resolvedUrl: response.headers.get('X-Esim-Resolved-URL') || url,
+                durationMs: response.headers.get('X-Esim-HTTP-Duration-Ms') || '-'
+            };
+        }
+
+        async function relayEsimHttpsRequest(request) {
+            const id = Number(request?.id || 0);
+            const url = String(request?.url || '').trim();
+            const body = request?.body === undefined || request?.body === null ? '' : String(request.body);
+            const smdpAddress = String(request?.smdpAddress || request?.smdp || esimDownloadState.smdpAddress || '').trim();
+            if (!url) throw new Error('esim.https_req 缺少 url');
+
+            esimDownloadState.relaying = true;
+            esimDownloadState.requestId = id;
+            esimDownloadState.lastAckOffset = 0;
+            setEsimMetric('esimStatusValue', 'https');
+            setEsimMetric('esimOffsetValue', '0/0');
+            setEsimMessage(`正在请求 eSIM HTTPS #${id || '-'}...`, '#2563eb');
+            appendEsimLog('esimHttpLog', `REQ #${id || '-'} ${url} smdp=${smdpAddress || '-'} body=${utf8ByteLength(body)} bytes`, '<');
+
+            const controller = new AbortController();
+            esimDownloadState.abortController = controller;
+            appendEsimLog('esimHttpLog', `FETCH /api/esim/https #${id || '-'}...`, '<');
+            const httpResult = await fetchEsimHttpsViaProxy(url, body, smdpAddress, controller.signal);
+            esimDownloadState.abortController = null;
+
+            const bytes = httpResult.bytes;
+            esimDownloadState.total = bytes.length;
+            appendEsimLog(
+                'esimHttpLog',
+                `RESP #${id || '-'} ${httpResult.resolvedUrl} status=${httpResult.status} time=${httpResult.durationMs}ms type=${httpResult.contentType} body=${bytes.length} bytes`,
+                '>'
+            );
+
+            const beginPayload = await sendEsimCommand(
+                { c: 'esim.resp_begin', p: { id, total: bytes.length } },
+                'esim.resp_begin',
+                { maxWait: 15000 }
+            );
+            const beginError = esimCommandErrorText(beginPayload, 'esim.resp_begin');
+            if (beginError) throw new Error(beginError);
+
+            if (bytes.length === 0) {
+                setEsimMetric('esimOffsetValue', '0/0');
+                setEsimMessage(`HTTPS #${id || '-'} 空响应体已提交。`, '#16a34a');
+                esimDownloadState.relaying = false;
+                return;
+            }
+
+            let offset = 0;
+            const chunkLimit = Math.max(1, Number(esimDownloadState.chunkLimit) || ESIM_DEFAULT_CHUNK_LIMIT);
+            setEsimMetric('esimChunkLimitValue', `${chunkLimit} bytes`);
+            setEsimMetric('esimOffsetValue', `0/${bytes.length}`);
+
+            while (offset < bytes.length) {
+                const end = Math.min(offset + chunkLimit, bytes.length);
+                const chunk = bytes.subarray(offset, end);
+                const dataPayload = await sendEsimDataChunk(
+                    { c: 'esim.data', p: { id, offset, data: encodeBase64FromBytes(chunk) } },
+                    id,
+                    offset,
+                    30000
+                );
+                const dataError = esimCommandErrorText(dataPayload, 'esim.data');
+                if (dataError) throw new Error(dataError);
+
+                const nextOffset = getEsimAckOffset(dataPayload);
+                if (!Number.isFinite(nextOffset) || nextOffset <= offset || nextOffset > bytes.length) {
+                    throw new Error(`esim.data ack offset 异常: ${JSON.stringify(dataPayload.r)}`);
+                }
+                offset = nextOffset;
+                esimDownloadState.lastAckOffset = offset;
+                setEsimMetric('esimOffsetValue', `${offset}/${bytes.length}`);
+                setEsimMessage(`HTTPS #${id || '-'} 已回传 ${offset}/${bytes.length} bytes。`, '#2563eb');
+            }
+
+            setEsimMessage(`HTTPS #${id || '-'} 响应体回传完成。`, '#16a34a');
+            esimDownloadState.relaying = false;
+        }
+
+        function handleEsimEvent(eventData) {
+            const eventName = getEsimPayloadName(eventData);
+            if (!eventName.startsWith('esim.')) return;
+            appendEsimEventLog(eventData);
+
+            if (eventName === 'esim.start' && Number.isFinite(Number(eventData.r)) && Number(eventData.r) > 0) {
+                esimDownloadState.chunkLimit = Number(eventData.r);
+                setEsimMetric('esimChunkLimitValue', `${esimDownloadState.chunkLimit} bytes`);
+                return;
+            }
+
+            if (typeof eventData.e !== 'string') {
+                if (eventName === 'esim.data' && eventData.e !== undefined) {
+                    setEsimMessage(`eSIM 数据块失败：${eventData.e}`, '#dc2626');
+                }
+                return;
+            }
+
+            if (eventName === 'esim.status') {
+                setEsimMetric('esimStatusValue', eventData.r);
+                setEsimMessage(`eSIM 状态：${eventData.r}`, eventData.r === 'downloading' ? '#2563eb' : '#16a34a');
+                return;
+            }
+
+            if (eventName === 'esim.https_req') {
+                const req = eventData.r || {};
+                const key = makeEsimRelayRequestKey(req);
+                if (esimDownloadState.handledHttpsRequests.has(key)) {
+                    appendEsimLog('esimHttpLog', `SKIP duplicate #${req.id ?? '-'} ${req.url || '(empty url)'}`, '>');
+                    return;
+                }
+                if (!claimEsimRelayOwnership('https_req')) {
+                    appendEsimLog('esimHttpLog', `SKIP relay in this tab #${req.id ?? '-'}: another page owns eSIM relay`, '>');
+                    return;
+                }
+                if (!claimEsimRelayRequest(key, req)) {
+                    appendEsimLog('esimHttpLog', `SKIP duplicate relay #${req.id ?? '-'} ${req.url || '(empty url)'}`, '>');
+                    return;
+                }
+                esimDownloadState.handledHttpsRequests.add(key);
+                queueEsimHttpsRelay(eventData.r);
+                return;
+            }
+
+            if (eventName === 'esim.data') {
+                const code = getEsimPayloadCode(eventData);
+                if (code !== undefined && code !== 0) {
+                    setEsimMessage(`eSIM 数据块失败：${code}`, '#dc2626');
+                    return;
+                }
+
+                const nextOffset = getEsimAckOffset(eventData);
+                if (Number.isFinite(nextOffset)) {
+                    esimDownloadState.lastAckOffset = nextOffset;
+                    setEsimMetric('esimOffsetValue', `${nextOffset}/${esimDownloadState.total || '?'}`);
+                }
+                return;
+            }
+
+            if (eventName === 'esim.result') {
+                renderEsimResult(eventData.r);
+                const code = getEsimPayloadCode(eventData);
+                setEsimMetric('esimStatusValue', 'done');
+                setEsimMessage(`eSIM 下载结果：${code}`, code === 0 ? '#16a34a' : '#dc2626');
+                rejectEsimEventWaiters(makeEsimFlowStopError(`eSIM 下载结果：${code}`));
+                releaseEsimRelayOwnership();
+                return;
+            }
+
+            if (eventName === 'esim.list') {
+                const code = getEsimPayloadCode(eventData);
+                if (code !== undefined && code !== 0) {
+                    setEsimMessage(`eSIM 列表查询失败：${code}`, '#dc2626');
+                } else {
+                    renderEsimList(eventData);
+                    setEsimMessage('eSIM profile 列表已更新。', '#16a34a');
+                }
+                return;
+            }
+
+            if (eventName === 'esim.enable' || eventName === 'esim.delete') {
+                const code = getEsimPayloadCode(eventData);
+                const ok = code === 0;
+                setEsimMessage(`${eventName} ${ok ? '成功' : `失败：${code}`}`, ok ? '#16a34a' : '#dc2626');
+            }
+        }
+
+        const esimActivationInput = document.getElementById('esimActivationCode');
+        if (esimActivationInput) {
+            esimActivationInput.addEventListener('input', updateEsimActivationByteCount);
+            updateEsimActivationByteCount();
         }
 
         function setWifiMessage(message, color = '#4b5563') {
@@ -2317,6 +3195,11 @@
             handleWifiAddTag,
             handleWifiDeleteTag,
             handleWifiQueryTags,
+            handleEsimStart,
+            handleEsimCancel,
+            handleEsimList,
+            handleEsimEnable,
+            handleEsimDelete,
             openWifiLocationPicker,
             clearWifiLocation
         });

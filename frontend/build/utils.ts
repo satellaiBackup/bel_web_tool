@@ -1,5 +1,6 @@
 import dayjs from "dayjs";
-import { readdir, stat } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdir, stat } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { sum, formatBytes } from "@pureadmin/utils";
@@ -13,6 +14,14 @@ import {
 
 /** 启动`node`进程时所在工作目录的绝对路径 */
 const root: string = process.cwd();
+
+const legacyToolPath = resolve(root, "public", "legacy", "ble-tool.js");
+const legacyScriptHash = existsSync(legacyToolPath)
+  ? createHash("sha256")
+      .update(readFileSync(legacyToolPath))
+      .digest("hex")
+      .slice(0, 12)
+  : dayjs(new Date()).format("YYYYMMDDHHmmss");
 
 /**
  * @description 根据可选的路径片段生成一个新的绝对路径
@@ -44,7 +53,9 @@ const alias: Record<string, string> = {
 /** 平台的名称、版本、运行所需的`node`和`pnpm`版本、依赖、最后构建时间的类型提示 */
 const __APP_INFO__ = {
   pkg: { name, version, engines, dependencies, devDependencies },
-  lastBuildTime: dayjs(new Date()).format("YYYY-MM-DD HH:mm:ss")
+  lastBuildTime: dayjs(new Date()).format("YYYY-MM-DD HH:mm:ss"),
+  legacyScriptHash,
+  legacyScriptFile: `ble-tool-${legacyScriptHash}.js`
 };
 
 /** 处理环境变量 */

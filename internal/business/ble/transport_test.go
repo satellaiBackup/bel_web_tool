@@ -68,3 +68,14 @@ func TestBuildTransportFramesMultipleFrames(t *testing.T) {
 		t.Fatalf("reassembled = %q, want %q", reassembled, payload)
 	}
 }
+
+func TestTransportReceiveLimitAcceptsEsimHttpsRequest(t *testing.T) {
+	const esimHTTPSRequestBytes = 2479
+
+	if tpMaxReceiveSDU < esimHTTPSRequestBytes {
+		t.Fatalf("tpMaxReceiveSDU = %d, want at least %d", tpMaxReceiveSDU, esimHTTPSRequestBytes)
+	}
+	if tpMaxSendSDU >= tpMaxReceiveSDU {
+		t.Fatalf("tpMaxSendSDU = %d should stay below receive limit %d", tpMaxSendSDU, tpMaxReceiveSDU)
+	}
+}

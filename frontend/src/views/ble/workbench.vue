@@ -32,7 +32,7 @@ const moduleTabs = [
     id: "communicationSection",
     label: "通讯",
     title: "通讯",
-    description: "卫星短报文、NTN 状态与调试环境"
+    description: "eSIM 下发、卫星短报文、NTN 状态与调试环境"
   },
   {
     id: "positioningSection",
@@ -63,6 +63,9 @@ const focusedLogTitle = computed(() => {
     ntnConversationLog: "NTN 短报文对话",
     ntnCmdRspLog: "NTN 命令日志",
     ntnEventLog: "NTN 事件日志",
+    esimCmdRspLog: "eSIM 命令日志",
+    esimEventLog: "eSIM 事件日志",
+    esimHttpLog: "eSIM HTTPS 日志",
     wifiCmdRspLog: "Wi-Fi 命令日志"
   };
   return focusedLogId.value ? titleMap[focusedLogId.value] : "";
@@ -124,19 +127,25 @@ function handleWorkbenchKeydown(event: KeyboardEvent): void {
 }
 
 function legacyCall(name: string, ...args: unknown[]): void {
-  const fn = (window as unknown as LegacyWindow)[name];
-  if (typeof fn !== "function") {
-    console.warn(`Legacy BLE handler "${name}" is not ready.`);
-    return;
-  }
+  void ensureLegacyScriptReady()
+    .then(() => {
+      const fn = (window as unknown as LegacyWindow)[name];
+      if (typeof fn !== "function") {
+        console.warn(`Legacy BLE handler "${name}" is not ready.`);
+        return;
+      }
 
-  try {
-    void Promise.resolve(fn(...args)).catch(error => {
-      console.error(`Legacy BLE handler "${name}" failed:`, error);
+      try {
+        void Promise.resolve(fn(...args)).catch(error => {
+          console.error(`Legacy BLE handler "${name}" failed:`, error);
+        });
+      } catch (error) {
+        console.error(`Legacy BLE handler "${name}" failed:`, error);
+      }
+    })
+    .catch(error => {
+      console.error(`Legacy BLE script is not ready for "${name}":`, error);
     });
-  } catch (error) {
-    console.error(`Legacy BLE handler "${name}" failed:`, error);
-  }
 }
 
 function legacyElement<T extends HTMLElement>(id: string): T | null {
@@ -167,20 +176,69 @@ const bridge: LegacyBridge = {
 };
 
 // The legacy script owns BLE state, notifications, and command parsing.
-function loadLegacyScript(): void {
-  if (document.getElementById("ble-web-tool-legacy-script")) {
-    return;
+const legacyScriptVersion = `ble-tool-${__APP_INFO__.legacyScriptHash}`;
+const legacyScriptSrc = import.meta.env.PROD
+  ? `./legacy/${__APP_INFO__.legacyScriptFile}`
+  : `./legacy/ble-tool.js?v=${legacyScriptVersion}`;
+let legacyScriptReadyPromise: Promise<void> | null = null;
+
+function hasLegacyBaseHandlers(): boolean {
+  return typeof (window as unknown as LegacyWindow).scanBleDevices === "function";
+}
+
+function ensureLegacyScriptReady(): Promise<void> {
+  if (hasLegacyBaseHandlers()) {
+    return Promise.resolve();
+  }
+  if (legacyScriptReadyPromise) {
+    return legacyScriptReadyPromise;
   }
 
-  const script = document.createElement("script");
-  script.id = "ble-web-tool-legacy-script";
-  script.src = "./legacy/ble-tool.js";
-  script.async = false;
-  script.onerror = () => {
-    script.remove();
-    console.error("Unable to load legacy BLE tool script.");
-  };
-  document.body.appendChild(script);
+  legacyScriptReadyPromise = new Promise<void>((resolve, reject) => {
+    const complete = () => {
+      window.setTimeout(() => {
+        if (hasLegacyBaseHandlers()) {
+          resolve();
+        } else {
+          reject(new Error("Legacy BLE script loaded without handlers."));
+        }
+      }, 0);
+    };
+    const fail = () => {
+      reject(new Error("Unable to load legacy BLE tool script."));
+    };
+
+    const existingScript = document.getElementById(
+      "ble-web-tool-legacy-script"
+    ) as HTMLScriptElement | null;
+    if (existingScript?.dataset.version === legacyScriptVersion) {
+      existingScript.addEventListener("load", complete, { once: true });
+      existingScript.addEventListener("error", fail, { once: true });
+      window.setTimeout(complete, 5000);
+      return;
+    }
+    existingScript?.remove();
+
+    const script = document.createElement("script");
+    script.id = "ble-web-tool-legacy-script";
+    script.dataset.version = legacyScriptVersion;
+    script.src = legacyScriptSrc;
+    script.async = false;
+    script.onload = complete;
+    script.onerror = fail;
+    document.body.appendChild(script);
+  }).catch(error => {
+    legacyScriptReadyPromise = null;
+    throw error;
+  });
+
+  return legacyScriptReadyPromise;
+}
+
+function loadLegacyScript(): void {
+  void ensureLegacyScriptReady().catch(error => {
+    console.error("Unable to initialize legacy BLE tool script.", error);
+  });
 }
 
 onMounted(() => {

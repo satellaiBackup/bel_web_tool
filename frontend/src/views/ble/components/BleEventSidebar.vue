@@ -63,6 +63,12 @@ defineProps<{
         <button type="button" @click="bridge.focusLog('ntnConversationLog')">
           NTN 对话
         </button>
+        <button type="button" @click="bridge.focusLog('esimCmdRspLog')">
+          eSIM 命令
+        </button>
+        <button type="button" @click="bridge.focusLog('esimHttpLog')">
+          eSIM HTTPS
+        </button>
         <button type="button" @click="bridge.focusLog('wifiCmdRspLog')">
           Wi-Fi 日志
         </button>

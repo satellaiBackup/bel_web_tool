@@ -1,6 +1,7 @@
 import vue from "@vitejs/plugin-vue";
 import * as vueCompiler from "vue/compiler-sfc";
 import { viteBuildInfo } from "./info";
+import { legacyToolCacheBust } from "./legacy";
 import svgLoader from "vite-svg-loader";
 import Icons from "unplugin-icons/vite";
 import type { PluginOption } from "vite";
@@ -33,6 +34,7 @@ export function getPluginsList(VITE_COMPRESSION: ViteCompression): PluginOption[
       hideConsole: true
     }),
     viteBuildInfo(),
+    legacyToolCacheBust(),
     /**
      * 开发环境下移除非必要的vue-router动态路由警告No match found for location with path
      * 非必要具体看 https://github.com/vuejs/router/issues/521 和 https://github.com/vuejs/router/issues/359

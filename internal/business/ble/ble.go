@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -60,15 +61,30 @@ type bleConnection struct {
 }
 
 type bleEvent struct {
-	Type               string `json:"type"`
-	Timestamp          string `json:"timestamp"`
-	Address            string `json:"address,omitempty"`
-	Name               string `json:"name,omitempty"`
-	ServiceUUID        string `json:"serviceUuid,omitempty"`
-	CharacteristicUUID string `json:"characteristicUuid,omitempty"`
-	TransportChannel   *int   `json:"transportChannel,omitempty"`
-	Data               string `json:"data,omitempty"`
-	Error              string `json:"error,omitempty"`
+	Type               string             `json:"type"`
+	Timestamp          string             `json:"timestamp"`
+	Address            string             `json:"address,omitempty"`
+	Name               string             `json:"name,omitempty"`
+	ServiceUUID        string             `json:"serviceUuid,omitempty"`
+	CharacteristicUUID string             `json:"characteristicUuid,omitempty"`
+	TransportChannel   *int               `json:"transportChannel,omitempty"`
+	TransportDebug     *bleTransportDebug `json:"transportDebug,omitempty"`
+	Data               string             `json:"data,omitempty"`
+	Error              string             `json:"error,omitempty"`
+}
+
+type bleTransportDebug struct {
+	Phase    string `json:"phase"`
+	Channel  int    `json:"channel"`
+	MsgID    int    `json:"msgId"`
+	Seq      int    `json:"seq"`
+	SOF      bool   `json:"sof"`
+	EOF      bool   `json:"eof"`
+	FrameLen int    `json:"frameLen"`
+	ChunkLen int    `json:"chunkLen,omitempty"`
+	Got      uint32 `json:"got,omitempty"`
+	Total    uint32 `json:"total,omitempty"`
+	Status   string `json:"status,omitempty"`
 }
 
 type bleScanDevice struct {
@@ -266,12 +282,15 @@ func (m *bleManager) handleWrite(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "data 不是有效的 base64")
 		return
 	}
+	log.Printf("[ble] write request service=%s char=%s len=%d transportChannel=%v", req.ServiceUUID, req.CharacteristicUUID, len(payload), req.TransportChannel)
 
 	if err := m.writeCharacteristic(req.ServiceUUID, req.CharacteristicUUID, payload, req.TransportChannel); err != nil {
+		log.Printf("[ble] write failed service=%s char=%s len=%d err=%v", req.ServiceUUID, req.CharacteristicUUID, len(payload), err)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	log.Printf("[ble] write ok service=%s char=%s len=%d", req.ServiceUUID, req.CharacteristicUUID, len(payload))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -288,10 +307,12 @@ func (m *bleManager) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := m.enableNotifications(req.ServiceUUID, req.CharacteristicUUID); err != nil {
+		log.Printf("[ble] subscribe failed service=%s char=%s err=%v", req.ServiceUUID, req.CharacteristicUUID, err)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	log.Printf("[ble] subscribe ok service=%s char=%s", req.ServiceUUID, req.CharacteristicUUID)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -688,6 +709,7 @@ func (m *bleManager) enableNotificationsLocked(conn *bleConnection, serviceUUID,
 		return err
 	}
 	if conn.notifyState[key] {
+		log.Printf("[ble] notify already enabled key=%s", key)
 		return nil
 	}
 
@@ -707,6 +729,7 @@ func (m *bleManager) enableNotificationsLocked(conn *bleConnection, serviceUUID,
 				return
 			}
 		}
+		log.Printf("[ble] notify rx service=%s char=%s len=%d", normalizedServiceUUID, normalizedCharUUID, len(copyBuf))
 		m.broadcast(bleEvent{
 			Type:               "notification",
 			Timestamp:          time.Now().Format(time.RFC3339Nano),
@@ -721,6 +744,10 @@ func (m *bleManager) enableNotificationsLocked(conn *bleConnection, serviceUUID,
 	}
 
 	conn.notifyState[key] = true
+	log.Printf("[ble] notify enabled key=%s service=%s char=%s", key, normalizedServiceUUID, normalizedCharUUID)
+	if normalizedServiceUUID == uuidSvcSatellai && normalizedCharUUID == uuidCharTP {
+		log.Printf("[ble] transport ccc subscribed char=%s", normalizedCharUUID)
+	}
 
 	if normalizedServiceUUID == uuidSvcSatellai && normalizedCharUUID != uuidCharTP {
 		if _, ok := charToTransportChannel[normalizedCharUUID]; ok {

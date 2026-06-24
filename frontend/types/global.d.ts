@@ -20,6 +20,8 @@ declare global {
       devDependencies: Recordable<string>;
     };
     lastBuildTime: string;
+    legacyScriptHash: string;
+    legacyScriptFile: string;
   };
 
   /**

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -32,7 +33,8 @@ const (
 	tpAckTimeout    = 0x05
 	tpAckWait       = 5 * time.Second
 	tpMaxSendRetry  = 2
-	tpMaxReceiveSDU = 2048
+	tpMaxSendSDU    = 2048
+	tpMaxReceiveSDU = 8192
 )
 
 var (
@@ -121,8 +123,8 @@ func (m *bleManager) writeCharacteristicAuto(serviceUUID, characteristicUUID str
 }
 
 func (m *bleManager) writeTransportLocked(conn *bleConnection, channel byte, payload []byte) error {
-	if len(payload) > tpMaxReceiveSDU {
-		return fmt.Errorf("大包数据长度 %d 超过设备上限 %d 字节", len(payload), tpMaxReceiveSDU)
+	if len(payload) > tpMaxSendSDU {
+		return fmt.Errorf("大包数据长度 %d 超过设备上限 %d 字节", len(payload), tpMaxSendSDU)
 	}
 
 	tpChar, tpKey, err := m.ensureTransportNotificationsLocked(conn)
@@ -140,6 +142,7 @@ func (m *bleManager) writeTransportLocked(conn *bleConnection, channel byte, pay
 		msgID := conn.transport.nextMsgID()
 		ackCh := conn.transport.registerPending(msgID)
 		frames := buildTransportFrames(channel, msgID, payload, frameLimit)
+		log.Printf("[ble-tp] tx start ch=%d msg=%d len=%d frames=%d attempt=%d frameLimit=%d", channel, msgID, len(payload), len(frames), attempt+1, frameLimit)
 
 		lastErr = nil
 		for _, frame := range frames {
@@ -149,6 +152,7 @@ func (m *bleManager) writeTransportLocked(conn *bleConnection, channel byte, pay
 			}
 		}
 		if lastErr != nil {
+			log.Printf("[ble-tp] tx write failed ch=%d msg=%d err=%v", channel, msgID, lastErr)
 			conn.transport.clearPending(msgID)
 			continue
 		}
@@ -157,11 +161,14 @@ func (m *bleManager) writeTransportLocked(conn *bleConnection, channel byte, pay
 		case status := <-ackCh:
 			conn.transport.clearPending(msgID)
 			if status == tpAckOK {
+				log.Printf("[ble-tp] tx ack ok ch=%d msg=%d", channel, msgID)
 				return nil
 			}
+			log.Printf("[ble-tp] tx nak ch=%d msg=%d status=%d", channel, msgID, status)
 			lastErr = fmt.Errorf("设备返回大包 NAK: status=%d", status)
 		case <-time.After(tpAckWait):
 			conn.transport.clearPending(msgID)
+			log.Printf("[ble-tp] tx ack timeout ch=%d msg=%d", channel, msgID)
 			lastErr = errTransportNoACK
 		}
 	}
@@ -195,9 +202,13 @@ func (m *bleManager) handleTransportNotification(conn *bleConnection, tpChar blu
 	sof := ctrl&tpCtrlSOF != 0
 	eof := ctrl&tpCtrlEOF != 0
 	channel := ctrl & 0x0f
+	log.Printf("[ble-tp] rx frame ch=%d msg=%d seq=%d sof=%t eof=%t len=%d", channel, msgID, seq, sof, eof, len(data))
+	m.broadcastTransportDebug(conn, "frame", channel, msgID, seq, sof, eof, len(data), len(data)-3, 0, 0, "")
 
 	if channel == tpChCtrl {
 		if len(data) >= 12 && data[9] == tpAckType {
+			log.Printf("[ble-tp] rx ack msg=%d status=%d", data[10], data[11])
+			m.broadcastTransportDebug(conn, "ack", channel, msgID, seq, sof, eof, len(data), len(data)-9, 0, 0, fmt.Sprintf("ack_msg=%d status=%d", data[10], data[11]))
 			conn.transport.resolvePending(data[10], data[11])
 		}
 		return true
@@ -214,29 +225,41 @@ func (m *bleManager) handleTransportNotification(conn *bleConnection, tpChar blu
 		total := binary.LittleEndian.Uint32(data[3:7])
 		crc := binary.LittleEndian.Uint16(data[7:9])
 		chunk := data[9:]
+		m.broadcastTransportDebug(conn, "chunk", channel, msgID, seq, sof, eof, len(data), len(chunk), uint32(len(chunk)), total, "sof")
 		if total > tpMaxReceiveSDU {
+			log.Printf("[ble-tp] rx reject too long ch=%d msg=%d total=%d max=%d", channel, msgID, total, tpMaxReceiveSDU)
+			m.broadcastTransportDebug(conn, "reject", channel, msgID, seq, sof, eof, len(data), len(chunk), uint32(len(chunk)), total, "too_long")
 			_ = sendTransportACK(tpChar, msgID, tpAckTooLong)
 			return true
 		}
 		if uint32(len(chunk)) > total {
+			log.Printf("[ble-tp] rx reject first chunk too long ch=%d msg=%d chunk=%d total=%d", channel, msgID, len(chunk), total)
+			m.broadcastTransportDebug(conn, "reject", channel, msgID, seq, sof, eof, len(data), len(chunk), uint32(len(chunk)), total, "first_chunk_too_long")
 			_ = sendTransportACK(tpChar, msgID, tpAckSeq)
 			return true
 		}
 
 		if sof && eof {
 			if uint32(len(chunk)) != total {
+				log.Printf("[ble-tp] rx single len mismatch ch=%d msg=%d chunk=%d total=%d", channel, msgID, len(chunk), total)
+				m.broadcastTransportDebug(conn, "reject", channel, msgID, seq, sof, eof, len(data), len(chunk), uint32(len(chunk)), total, "single_len_mismatch")
 				_ = sendTransportACK(tpChar, msgID, tpAckSeq)
 				return true
 			}
 			if crc16CCITT(chunk) != crc {
+				log.Printf("[ble-tp] rx single crc fail ch=%d msg=%d len=%d", channel, msgID, len(chunk))
+				m.broadcastTransportDebug(conn, "reject", channel, msgID, seq, sof, eof, len(data), len(chunk), uint32(len(chunk)), total, "single_crc")
 				_ = sendTransportACK(tpChar, msgID, tpAckCRC)
 				return true
 			}
 			_ = sendTransportACK(tpChar, msgID, tpAckOK)
+			log.Printf("[ble-tp] rx complete ch=%d msg=%d len=%d single=true", channel, msgID, len(chunk))
+			m.broadcastTransportDebug(conn, "complete", channel, msgID, seq, sof, eof, len(data), len(chunk), total, total, "single")
 			m.broadcastTransportPayload(conn, channel, chunk)
 			return true
 		}
 
+		log.Printf("[ble-tp] rx start ch=%d msg=%d total=%d first=%d crc=0x%04x", channel, msgID, total, len(chunk), crc)
 		buf := make([]byte, total)
 		copy(buf, chunk)
 		conn.transport.rx = &bleTransportRx{
@@ -253,6 +276,11 @@ func (m *bleManager) handleTransportNotification(conn *bleConnection, tpChar blu
 
 	rx := conn.transport.rx
 	if rx == nil || rx.msgID != msgID || rx.channel != channel || rx.nextSeq != seq {
+		if rx == nil {
+			log.Printf("[ble-tp] rx seq reject no active rx ch=%d msg=%d seq=%d", channel, msgID, seq)
+		} else {
+			log.Printf("[ble-tp] rx seq reject got ch=%d msg=%d seq=%d want ch=%d msg=%d seq=%d", channel, msgID, seq, rx.channel, rx.msgID, rx.nextSeq)
+		}
 		conn.transport.rx = nil
 		_ = sendTransportACK(tpChar, msgID, tpAckSeq)
 		return true
@@ -260,6 +288,8 @@ func (m *bleManager) handleTransportNotification(conn *bleConnection, tpChar blu
 
 	chunk := data[3:]
 	if rx.got+uint32(len(chunk)) > rx.total {
+		log.Printf("[ble-tp] rx overflow ch=%d msg=%d got=%d chunk=%d total=%d", channel, msgID, rx.got, len(chunk), rx.total)
+		m.broadcastTransportDebug(conn, "reject", channel, msgID, seq, sof, eof, len(data), len(chunk), rx.got, rx.total, "overflow")
 		conn.transport.rx = nil
 		_ = sendTransportACK(tpChar, msgID, tpAckSeq)
 		return true
@@ -268,23 +298,55 @@ func (m *bleManager) handleTransportNotification(conn *bleConnection, tpChar blu
 	copy(rx.buf[rx.got:], chunk)
 	rx.got += uint32(len(chunk))
 	rx.nextSeq += 1
+	log.Printf("[ble-tp] rx chunk ch=%d msg=%d seq=%d got=%d/%d eof=%t", channel, msgID, seq, rx.got, rx.total, eof)
+	m.broadcastTransportDebug(conn, "chunk", channel, msgID, seq, sof, eof, len(data), len(chunk), rx.got, rx.total, "")
 	if !eof {
 		return true
 	}
 
 	conn.transport.rx = nil
 	if rx.got != rx.total {
+		log.Printf("[ble-tp] rx final len mismatch ch=%d msg=%d got=%d total=%d", channel, msgID, rx.got, rx.total)
+		m.broadcastTransportDebug(conn, "reject", channel, msgID, seq, sof, eof, len(data), len(chunk), rx.got, rx.total, "final_len_mismatch")
 		_ = sendTransportACK(tpChar, msgID, tpAckSeq)
 		return true
 	}
 	if crc16CCITT(rx.buf) != rx.crc {
+		log.Printf("[ble-tp] rx final crc fail ch=%d msg=%d len=%d", channel, msgID, len(rx.buf))
+		m.broadcastTransportDebug(conn, "reject", channel, msgID, seq, sof, eof, len(data), len(chunk), rx.got, rx.total, "final_crc")
 		_ = sendTransportACK(tpChar, msgID, tpAckCRC)
 		return true
 	}
 
 	_ = sendTransportACK(tpChar, msgID, tpAckOK)
+	log.Printf("[ble-tp] rx complete ch=%d msg=%d len=%d single=false", channel, msgID, len(rx.buf))
+	m.broadcastTransportDebug(conn, "complete", channel, msgID, seq, sof, eof, len(data), len(chunk), rx.got, rx.total, "multi")
 	m.broadcastTransportPayload(conn, channel, rx.buf)
 	return true
+}
+
+func (m *bleManager) broadcastTransportDebug(conn *bleConnection, phase string, channel, msgID, seq byte, sof, eof bool, frameLen, chunkLen int, got, total uint32, status string) {
+	transportChannel := int(channel)
+	m.broadcast(bleEvent{
+		Type:             "transport_debug",
+		Timestamp:        time.Now().Format(time.RFC3339Nano),
+		Address:          conn.address,
+		Name:             conn.name,
+		TransportChannel: &transportChannel,
+		TransportDebug: &bleTransportDebug{
+			Phase:    phase,
+			Channel:  int(channel),
+			MsgID:    int(msgID),
+			Seq:      int(seq),
+			SOF:      sof,
+			EOF:      eof,
+			FrameLen: frameLen,
+			ChunkLen: chunkLen,
+			Got:      got,
+			Total:    total,
+			Status:   status,
+		},
+	})
 }
 
 func (m *bleManager) broadcastTransportPayload(conn *bleConnection, channel byte, payload []byte) {
@@ -292,6 +354,7 @@ func (m *bleManager) broadcastTransportPayload(conn *bleConnection, channel byte
 	if !ok {
 		charUUID = uuidCharTP
 	}
+	log.Printf("[ble-tp] broadcast ch=%d char=%s len=%d", channel, charUUID, len(payload))
 	transportChannel := int(channel)
 	copyBuf := append([]byte(nil), payload...)
 	m.broadcast(bleEvent{
