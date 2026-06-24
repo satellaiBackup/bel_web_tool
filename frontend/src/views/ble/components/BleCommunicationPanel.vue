@@ -275,48 +275,18 @@ function sendNtnSms(): void {
           </div>
         </section>
 
-        <section class="esim-panel">
+        <section class="esim-panel esim-list-panel">
           <div class="esim-panel-title">
-            <span>Profile 管理</span>
-          </div>
-          <div class="inline-controls">
-            <input
-              id="esimIccid"
-              type="text"
-              class="cmd cmd-input admin-input"
-              maxlength="32"
-              placeholder="ICCID"
-              disabled
-            />
+            <span>Profile 列表</span>
             <button
               class="cmd cmd-button secondary"
               disabled
               @click="bridge.call('handleEsimList')"
             >
-              查询列表
-            </button>
-            <button
-              class="cmd cmd-button"
-              disabled
-              @click="bridge.call('handleEsimEnable')"
-            >
-              启用
-            </button>
-            <button
-              class="cmd cmd-button danger"
-              disabled
-              @click="bridge.call('handleEsimDelete')"
-            >
-              删除
+              刷新列表
             </button>
           </div>
-        </section>
-
-        <section class="esim-panel">
-          <div class="esim-panel-title">
-            <span>Profile 列表</span>
-          </div>
-          <div id="esimListResult" class="result-panel esim-list-result"></div>
+          <div id="esimListResult" class="esim-list-result"></div>
         </section>
       </div>
 
@@ -490,8 +460,80 @@ function sendNtnSms(): void {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.esim-list-panel {
+  align-content: start;
+}
+
 .esim-list-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   min-height: 88px;
+  color: var(--ble-text-soft, #6b7280);
+  font-size: 13px;
+}
+
+.esim-profile-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--ble-border-soft);
+  border-radius: 8px;
+  background: var(--ble-surface, #fff);
+}
+
+.esim-profile-row.is-enabled {
+  border-color: #16a34a;
+  background: rgba(22, 163, 74, 0.06);
+}
+
+.esim-profile-main {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+
+.esim-profile-state {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.esim-profile-state.is-on {
+  background: #16a34a;
+}
+
+.esim-profile-state.is-off {
+  background: #9ca3af;
+}
+
+.esim-profile-name {
+  min-width: 0;
+  font-weight: 700;
+  color: var(--ble-text);
+  word-break: break-all;
+}
+
+.esim-profile-iccid {
+  margin-left: auto;
+  padding-left: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--ble-text-soft, #6b7280);
+  white-space: nowrap;
+}
+
+.esim-profile-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
 }
 
 .esim-log-layout {

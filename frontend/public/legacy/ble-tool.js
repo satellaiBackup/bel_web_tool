@@ -2030,25 +2030,135 @@
 
         function renderEsimResult(result) {
             const code = result && typeof result === 'object' ? result.code : result;
-            const iccid = result && typeof result === 'object' ? result.iccid : '';
             setEsimMetric('esimResultValue', code !== undefined ? code : '-');
-            if (iccid) {
-                const iccidInput = document.getElementById('esimIccid');
-                if (iccidInput) iccidInput.value = iccid;
+        }
+
+        // 解析 +QESIM: "list" 响应文本为结构化 profile 数组。
+        // 响应格式（Quectel）：
+        //   +QESIM: "list",0
+        //   "<iccid>",<state>,<iconType>,<profileClass>,"<profileName>","<providerName>"
+        // 其中 <state>: 0=禁用, 1=启用。
+        function parseEsimProfiles(rawText) {
+            if (typeof rawText !== 'string') return [];
+            const profiles = [];
+            const lines = rawText.split(/\r?\n/);
+            const fieldRegex = /\s*"((?:[^"\\]|\\.)*)"\s*|\s*([^,]+)/g;
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed === '' || trimmed.startsWith('+QESIM:') || trimmed.startsWith('OK')) continue;
+
+                const fields = [];
+                fieldRegex.lastIndex = 0;
+                let match;
+                while ((match = fieldRegex.exec(trimmed)) !== null) {
+                    if (match[1] !== undefined) {
+                        fields.push(match[1].replace(/\\"/g, '"'));
+                    } else if (match[2] !== undefined) {
+                        fields.push(match[2].trim());
+                    }
+                    if (match.index + match[0].length >= trimmed.length) break;
+                }
+                if (fields.length === 0) continue;
+
+                const iccid = String(fields[0] || '');
+                if (!iccid) continue;
+                const state = Number(fields[1]);
+                const enabled = state === 1;
+                const name = fields[4] !== undefined ? String(fields[4]) : '';
+                const provider = fields[5] !== undefined ? String(fields[5]) : '';
+                profiles.push({ iccid, state: Number.isFinite(state) ? state : null, enabled, name, provider });
             }
+            return profiles;
+        }
+
+        function escapeEsimIccid(iccid) {
+            return String(iccid).replace(/[^0-9A-Za-z]/g, '');
+        }
+
+        function refreshEsimProfileActionButtons() {
+            // 连接状态变化由 .cmd 统一控制，这里仅根据行内状态刷新启用按钮。
+            const rows = document.querySelectorAll('#esimListResult .esim-profile-row');
+            rows.forEach(row => {
+                const enabled = row.dataset.enabled === '1';
+                const enableBtn = row.querySelector('.esim-row-enable');
+                if (enableBtn) {
+                    enableBtn.disabled = enabled || !isDeviceConnected();
+                }
+            });
         }
 
         function renderEsimList(payload) {
             const container = document.getElementById('esimListResult');
             if (!container) return;
             const value = payload && payload.r !== undefined ? payload.r : payload;
-            if (typeof value === 'string') {
-                container.textContent = value;
-            } else if (value && typeof value === 'object' && typeof value.list === 'string') {
-                container.textContent = value.list;
-            } else {
-                container.textContent = JSON.stringify(value, null, 2);
+            const rawList = value && typeof value === 'object' && typeof value.list === 'string'
+                ? value.list
+                : (typeof value === 'string' ? value : '');
+
+            const profiles = parseEsimProfiles(rawList);
+            if (profiles.length === 0) {
+                container.textContent = '（无 profile，点击「刷新列表」重新查询）';
+                return;
             }
+
+            container.textContent = '';
+            profiles.forEach(profile => {
+                const row = document.createElement('div');
+                row.className = 'esim-profile-row' + (profile.enabled ? ' is-enabled' : '');
+                row.dataset.iccid = profile.iccid;
+                row.dataset.enabled = profile.enabled ? '1' : '0';
+
+                const main = document.createElement('div');
+                main.className = 'esim-profile-main';
+
+                const badge = document.createElement('span');
+                badge.className = 'esim-profile-state ' + (profile.enabled ? 'is-on' : 'is-off');
+                badge.textContent = profile.enabled ? '启用中' : '已禁用';
+
+                const nameWrap = document.createElement('div');
+                nameWrap.className = 'esim-profile-name';
+                const nameText = profile.name || profile.provider || '(未命名)';
+                nameWrap.textContent = nameText;
+                if (profile.provider && profile.provider !== nameText) {
+                    nameWrap.textContent = `${nameText} · ${profile.provider}`;
+                }
+
+                const iccidEl = document.createElement('span');
+                iccidEl.className = 'esim-profile-iccid';
+                iccidEl.textContent = profile.iccid;
+
+                main.appendChild(badge);
+                main.appendChild(nameWrap);
+                main.appendChild(iccidEl);
+                row.appendChild(main);
+
+                const actions = document.createElement('div');
+                actions.className = 'esim-profile-actions';
+
+                const enableBtn = document.createElement('button');
+                enableBtn.type = 'button';
+                enableBtn.className = 'cmd cmd-button';
+                enableBtn.textContent = '启用';
+                enableBtn.disabled = profile.enabled || !isDeviceConnected();
+                enableBtn.addEventListener('click', () => {
+                    handleEsimEnable(profile.iccid);
+                });
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.type = 'button';
+                deleteBtn.className = 'cmd cmd-button danger';
+                deleteBtn.textContent = '删除';
+                deleteBtn.disabled = !isDeviceConnected();
+                deleteBtn.addEventListener('click', () => {
+                    handleEsimDelete(profile.iccid);
+                });
+
+                actions.appendChild(enableBtn);
+                actions.appendChild(deleteBtn);
+                row.appendChild(actions);
+
+                container.appendChild(row);
+            });
         }
 
         function esimCommandErrorText(payload, commandName) {
@@ -2204,6 +2314,10 @@
         }
 
         async function handleEsimList() {
+            if (!isDeviceConnected()) {
+                setEsimMessage('设备未连接，无法查询列表。', '#dc2626');
+                return;
+            }
             setEsimMessage('正在查询 eSIM profile 列表...', '#2563eb');
             const payload = await sendEsimCommand({ c: 'esim.list' }, 'esim.list', { maxWait: 10000 });
             const errorText = esimCommandErrorText(payload, 'esim.list');
@@ -2214,24 +2328,15 @@
             setEsimMessage('查询已受理，等待列表事件。', '#16a34a');
         }
 
-        function getEsimIccid() {
-            const input = document.getElementById('esimIccid');
-            return {
-                input,
-                iccid: (input?.value || '').trim()
-            };
-        }
-
-        async function handleEsimEnable() {
-            const { input, iccid } = getEsimIccid();
-            if (!iccid) {
-                setEsimMessage('请输入要启用的 ICCID。', '#dc2626');
-                input && input.focus();
+        async function handleEsimEnable(iccid) {
+            const targetIccid = escapeEsimIccid(iccid);
+            if (!targetIccid) {
+                setEsimMessage('请提供要启用的 ICCID。', '#dc2626');
                 return;
             }
 
-            setEsimMessage(`正在启用 ICCID ${iccid}...`, '#2563eb');
-            const payload = await sendEsimCommand({ c: 'esim.enable', p: { iccid } }, 'esim.enable', { maxWait: 10000 });
+            setEsimMessage(`正在启用 ICCID ${targetIccid}...`, '#2563eb');
+            const payload = await sendEsimCommand({ c: 'esim.enable', p: { iccid: targetIccid } }, 'esim.enable', { maxWait: 10000 });
             const errorText = esimCommandErrorText(payload, 'esim.enable');
             if (errorText) {
                 setEsimMessage(errorText, '#dc2626');
@@ -2240,16 +2345,15 @@
             setEsimMessage('启用命令已受理，等待最终事件。', '#16a34a');
         }
 
-        async function handleEsimDelete() {
-            const { input, iccid } = getEsimIccid();
-            if (!iccid) {
-                setEsimMessage('请输入要删除的 ICCID。', '#dc2626');
-                input && input.focus();
+        async function handleEsimDelete(iccid) {
+            const targetIccid = escapeEsimIccid(iccid);
+            if (!targetIccid) {
+                setEsimMessage('请提供要删除的 ICCID。', '#dc2626');
                 return;
             }
 
-            setEsimMessage(`正在删除 ICCID ${iccid}...`, '#dc2626');
-            const payload = await sendEsimCommand({ c: 'esim.delete', p: { iccid } }, 'esim.delete', { maxWait: 10000 });
+            setEsimMessage(`正在删除 ICCID ${targetIccid}...`, '#dc2626');
+            const payload = await sendEsimCommand({ c: 'esim.delete', p: { iccid: targetIccid } }, 'esim.delete', { maxWait: 10000 });
             const errorText = esimCommandErrorText(payload, 'esim.delete');
             if (errorText) {
                 setEsimMessage(errorText, '#dc2626');
