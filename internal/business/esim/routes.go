@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -68,10 +69,10 @@ func handleHTTPSRelay(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	outReq.Header.Set("Accept", "*/*")
-	outReq.Header.Set("User-Agent", "ble-web-tool-esim-relay/1.0")
+	applyGSMAHTTPSHeaders(outReq)
 	if req.Body != "" {
 		outReq.Header.Set("Content-Type", "application/json")
+		outReq.Header.Set("charset", "utf-8")
 	}
 
 	client, err := newHTTPSClient()
@@ -107,6 +108,25 @@ func handleHTTPSRelay(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(payload)
+}
+
+func applyGSMAHTTPSHeaders(req *http.Request) {
+	req.Header.Set("X-Admin-Protocol", "gsma/rsp/v2.2.0")
+	req.Header.Set("User-Agent", "gsma-rsp-lpad")
+	req.Host = httpsHostHeader(req.URL)
+}
+
+func httpsHostHeader(target *url.URL) string {
+	if target == nil {
+		return ""
+	}
+	if target.Port() != "" {
+		return target.Host
+	}
+	if strings.EqualFold(target.Scheme, "https") {
+		return net.JoinHostPort(target.Hostname(), "443")
+	}
+	return target.Host
 }
 
 func handleTrace(w http.ResponseWriter, r *http.Request) {
