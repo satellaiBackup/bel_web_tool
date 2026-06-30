@@ -607,6 +607,15 @@
             resolve(buffer);
         }
 
+        // 判断响应缓冲区里是否已出现所等待命令的同步响应（`{"c": ...}`）。
+        // 只匹配第一个 `c` 命令响应；事件（`{"e": ...}`）、错误响应（`c` + 数值/对象 `e`）
+        // 也会一并触发立即 flush，避免响应行被后续连续事件推迟打印。
+        function responseBufferMatchesCommand(buffer, expectedCommand) {
+            if (!expectedCommand || typeof expectedCommand !== 'string') return false;
+            const payloads = parseMultipleJsonResponses(buffer || '');
+            return payloads.some(payload => payload && typeof payload === 'object' && payload.c === expectedCommand);
+        }
+
         function appendAppDebugLog(message) {
             const log = document.getElementById('appCmdRspLog');
             if (!log) return;
@@ -630,6 +639,10 @@
 
                     if (response.e === 'ntn_state' || response.e === 'ntn_sms_tx' || response.e === 'ntn_sms_rx') {
                         handleNtnEvent(response);
+                    }
+
+                    if (response.e === 'esim-pending') {
+                        handleEsimPendingEvent(response);
                     }
                 }
             });
@@ -748,10 +761,16 @@
 
                 if (pendingAppResponse) {
                     pendingAppResponse.buffer += text;
-                    if (pendingAppResponse.inactivityTimer) clearTimeout(pendingAppResponse.inactivityTimer);
-                    pendingAppResponse.inactivityTimer = setTimeout(() => {
+                    // 已经收到所等待命令的同步响应就立即结束本次响应收集，
+                    // 不必再等静默超时；避免后续连续事件把响应行推迟到下一条命令才打印。
+                    if (responseBufferMatchesCommand(pendingAppResponse.buffer, pendingAppResponse.expectedCommand)) {
                         flushPendingAppResponse();
-                    }, pendingAppResponse.inactivityMs);
+                    } else {
+                        if (pendingAppResponse.inactivityTimer) clearTimeout(pendingAppResponse.inactivityTimer);
+                        pendingAppResponse.inactivityTimer = setTimeout(() => {
+                            flushPendingAppResponse();
+                        }, pendingAppResponse.inactivityMs);
+                    }
                 }
             });
 
@@ -1299,6 +1318,7 @@
                             buffer: '',
                             inactivityTimer: null,
                             inactivityMs,
+                            expectedCommand: options.expectedCommand || null,
                             overallTimer: setTimeout(() => {
                                 flushPendingAppResponse();
                             }, overallMs)
@@ -1539,7 +1559,10 @@
         }
 
         async function sendNtnCommand(command, commandName) {
-            const rsp = await sendAppCommandViaBle(JSON.stringify(command), getNtnCommandOptions());
+            const rsp = await sendAppCommandViaBle(
+                JSON.stringify(command),
+                { ...getNtnCommandOptions(), expectedCommand: commandName }
+            );
             const payload = parseFirstCommandResponse(rsp, commandName);
             if (payload && payload.r && commandName === 'ntn.status') {
                 renderNtnStatus(payload.r);
@@ -1622,7 +1645,10 @@
             }
 
             setNtnMessage(`正在发送短信 #${id}...`, '#2563eb');
-            const payload = await sendNtnCommand({ c: 'ntn.sms', p: { id, text } }, 'ntn.sms');
+            const payload = await sendNtnCommand(
+                { c: 'ntn.sms', p: { id, payload: encodeBase64FromBytes(text) } },
+                'ntn.sms'
+            );
             if (payload && payload.r && payload.r.accepted === 1) {
                 ntnPendingSmsText.set(payload.r.id, text);
                 setNtnMessage(`短信 #${payload.r.id} 已被设备接受，等待 ntn_sms_tx。`, '#16a34a');
@@ -1770,10 +1796,40 @@
             el.style.color = color;
         }
 
-        function appendEsimLog(logId, message, direction = '>') {
+        function appendEsimTextLogLine(log, message, direction = '>') {
+            const value = String(message ?? '');
+            const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            const text = /[\r\n]$/.test(value) ? normalized : `${normalized}\n`;
+            text.split('\n').forEach((segment, index, segments) => {
+                if (index === segments.length - 1 && segment === '') return;
+                log.appendChild(document.createTextNode(`${timestamp()}${direction} ${segment}\n`));
+            });
+        }
+
+        function appendEsimRawBodyDetails(log, label, body) {
+            const details = document.createElement('details');
+            details.className = 'esim-raw-body-details';
+
+            const summary = document.createElement('summary');
+            summary.textContent = label;
+            details.appendChild(summary);
+
+            const pre = document.createElement('pre');
+            pre.className = 'esim-raw-body';
+            pre.textContent = String(body ?? '');
+            details.appendChild(pre);
+
+            log.appendChild(details);
+            log.appendChild(document.createTextNode('\n'));
+        }
+
+        function appendEsimLog(logId, message, direction = '>', rawBody) {
             const log = document.getElementById(logId);
             if (!log) return;
-            appendLogLine(log, message, direction);
+            appendEsimTextLogLine(log, message, direction);
+            if (rawBody && rawBody.label) {
+                appendEsimRawBodyDetails(log, rawBody.label, rawBody.body);
+            }
             log.scrollTop = log.scrollHeight;
         }
 
@@ -1914,6 +1970,118 @@
             return undefined;
         }
 
+        // eSIM 结果码（GSMA 0x85000xxx 系列）中文释义表。
+        // 键统一用小写十六进制字符串（去掉 0x 前缀，与厂商提供的对照表一致）。
+        const ESIM_RESULT_CODE_DESCRIPTIONS = {
+            '0': 'OK',
+            '85000001': '存储错误',
+            '85000002': '无效值错误',
+            '85000003': '激活码错误',
+            '85000004': '操作超时',
+            '85000005': '通用错误',
+            '85000006': '缓冲区溢出错误',
+            '85000007': '操作错误',
+            '85000008': '消息发送错误',
+            '85000009': 'APDU 发送错误',
+            '8500000a': 'APDU 状态错误',
+            '8500000b': 'APDU 解析错误',
+            '8500000c': 'TLV 解析错误',
+            '8500000d': 'JSON 解析错误',
+            '8500000e': '文件系统操作错误',
+            '8500000f': 'HTTPS 操作错误',
+            '85000010': 'HTTPS 繁忙错误',
+            '85000011': '系统繁忙',
+            '85000012': '获取 eUICC 信息 1 错误',
+            '85000013': 'HTTPS 消息发送错误',
+            '85000014': 'HTTPS 响应错误',
+            '85000015': 'HTTPS 头错误',
+            '85000016': 'SMDP 返回错误',
+            '85000017': '数据等待超时',
+            '85000101': '配置文件启用失败：未发现 ICCID 或 AID',
+            '85000102': '配置文件启用失败：配置文件已启用',
+            '85000103': '配置文件启用失败：策略不允许',
+            '85000104': '配置文件启用失败：重新启用配置文件时出错',
+            '85000105': '配置文件启用失败：卡应用繁忙',
+            '8500017f': '配置文件启用失败：未定义错误',
+            '85000201': '配置文件禁用失败：未发现 ICCID 或 AID',
+            '85000202': '配置文件禁用失败：配置文件已禁用',
+            '85000203': '配置文件禁用失败：策略不允许',
+            '85000204': '配置文件禁用失败：卡应用繁忙',
+            '8500027f': '配置文件禁用失败：未定义错误',
+            '85000301': '配置文件删除失败：未发现 ICCID 或 AID',
+            '85000302': '配置文件删除失败：配置文件已启用',
+            '85000303': '配置文件删除失败：策略不允许',
+            '8500037f': '配置文件删除失败：未定义错误',
+            '85000401': '配置文件列举失败：输入值不正确',
+            '8500047f': '配置文件列举失败：未定义错误',
+            '85000501': '别名定义错误：ICCID 未找到',
+            '8500057f': '别名定义错误：未定义错误',
+            '85000601': '通知错误：无内容可删除',
+            '8500067f': '通知错误：未定义错误',
+            '85000701': '认证服务器错误：无效证书',
+            '85000702': '认证服务器错误：无效签名',
+            '85000703': '认证服务器错误：不支持的曲线',
+            '85000704': '认证服务器错误：无会话上下文',
+            '85000705': '认证服务器错误：无效 OID',
+            '85000706': '认证服务器错误：eUICC Challenge 不匹配',
+            '85000707': '认证服务器错误：CIPK 未知',
+            '8500077f': '认证服务器错误：未定义错误',
+            '85000801': '准备下载错误：无效证书',
+            '85000802': '准备下载错误：无效签名',
+            '85000803': '准备下载错误：不支持的曲线',
+            '85000804': '准备下载错误：无会话上下文',
+            '85000805': '准备下载错误：无效事务 ID',
+            '8500087f': '准备下载错误：未定义错误',
+            '85000901': '安装失败：输入值不正确',
+            '85000902': '安装失败：无效签名',
+            '85000903': '安装失败：无效事务 ID',
+            '85000904': '安装失败：不支持的 CRT 值',
+            '85000905': '安装失败：不支持的远程操作类型',
+            '85000906': '安装失败：不支持的配置文件类别',
+            '85000907': '安装失败：SECP03T 结构错误',
+            '85000908': '安装失败：SECP03T 安全错误',
+            '85000909': '安装失败：ICCID 已存在于 eSIM',
+            '8500090a': '安装失败：配置文件内存不足',
+            '8500090b': '安装失败：操作中断',
+            '8500090c': '安装失败：PE 处理错误',
+            '8500090d': '安装失败：数据不匹配',
+            '8500090e': '测试配置文件安装失败：无效的 NAA 密钥',
+            '8500090f': '安装失败：不允许的 PPR',
+            '8500097f': '安装失败：未定义错误',
+            '85000a02': '备用配置文件错误：配置文件已启用',
+            '85000a05': '备用配置文件错误：卡应用忙碌',
+            '85000a06': '备用配置文件错误：不可用',
+            '85000a07': '备用配置文件错误：命令错误',
+            '85000a7f': '备用配置文件错误：未定义错误'
+        };
+
+        // 返回结果码对应的中文释义；未知则返回空字符串。
+        // 兼容两种常见传输约定：数字（如设备直接以十进制 JSON 发送的 85000704）
+        // 与字符串（如 "0x85000704"、"8500090E"）。
+        function describeEsimResultCode(code) {
+            if (code === undefined || code === null) return '';
+            if (typeof code === 'string') {
+                const key = code.trim().toLowerCase().replace(/^0x/, '');
+                return ESIM_RESULT_CODE_DESCRIPTIONS[key] || '';
+            }
+            const numeric = Number(code);
+            if (!Number.isFinite(numeric)) return '';
+            // 优先按设备"原样字符串"匹配（如十进制 85000704），再用十六进制兜底
+            // （如设备已转成等价十进制 2231373524 的情况）。
+            const asDecimal = String(numeric);
+            if (ESIM_RESULT_CODE_DESCRIPTIONS[asDecimal]) return ESIM_RESULT_CODE_DESCRIPTIONS[asDecimal];
+            const asHex = numeric.toString(16);
+            return ESIM_RESULT_CODE_DESCRIPTIONS[asHex] || '';
+        }
+
+        // 返回带中文释义的结果码展示串，如 "85000704 (认证服务器错误：无会话上下文)"；
+        // 未知码仅返回码本身。
+        function formatEsimResultCode(code) {
+            if (code === undefined || code === null || code === '') return '-';
+            const description = describeEsimResultCode(code);
+            return description ? `${code} (${description})` : String(code);
+        }
+
         function getEsimAckOffset(payload) {
             const result = payload && payload.r;
             if (result && typeof result === 'object') {
@@ -2030,7 +2198,7 @@
 
         function renderEsimResult(result) {
             const code = result && typeof result === 'object' ? result.code : result;
-            setEsimMetric('esimResultValue', code !== undefined ? code : '-');
+            setEsimMetric('esimResultValue', code !== undefined && code !== null ? formatEsimResultCode(code) : '-');
         }
 
         // 解析 +QESIM: "list" 响应文本为结构化 profile 数组。
@@ -2163,19 +2331,21 @@
 
         function esimCommandErrorText(payload, commandName) {
             if (!payload) return `${commandName} 未收到响应`;
-            if (payload.c && payload.e !== undefined) return `${commandName} 失败: ${payload.m || payload.e}`;
+            if (payload.c && payload.e !== undefined) {
+                const codeText = formatEsimResultCode(payload.e);
+                return `${commandName} 失败: ${payload.m || codeText}`;
+            }
             const code = getEsimPayloadCode(payload);
-            if (code !== undefined && code !== 0) return `${commandName} 失败: ${payload.m || code}`;
+            if (code !== undefined && code !== 0) return `${commandName} 失败: ${payload.m || formatEsimResultCode(code)}`;
             return '';
         }
 
         async function sendEsimCommand(command, commandName, options = {}) {
             const rsp = await sendAppCommandViaBle(
                 JSON.stringify(command),
-                { ...getEsimCommandOptions(), ...options }
+                { ...getEsimCommandOptions(), expectedCommand: commandName, ...options }
             );
             if (!rsp) return null;
-            dispatchEsimPayloadsFromText(rsp, `RESP(${commandName})`);
             return parseFirstCommandResponse(rsp, commandName);
         }
 
@@ -2362,6 +2532,36 @@
             setEsimMessage('删除命令已受理，等待最终事件。', '#16a34a');
         }
 
+        async function handleEsimOnboardEnter() {
+            if (!isDeviceConnected()) {
+                setEsimMessage('设备未连接，无法进入引导模式。', '#dc2626');
+                return;
+            }
+            setEsimMessage('正在强制进入 eSIM 引导模式...', '#2563eb');
+            const payload = await sendEsimCommand({ c: 'esim.onboard_enter' }, 'esim.onboard_enter', { maxWait: 10000 });
+            const errorText = esimCommandErrorText(payload, 'esim.onboard_enter');
+            if (errorText) {
+                setEsimMessage(errorText, '#dc2626');
+                return;
+            }
+            setEsimMessage('已进入引导模式，等待设备引导提醒事件。', '#16a34a');
+        }
+
+        async function handleEsimOnboardExit() {
+            if (!isDeviceConnected()) {
+                setEsimMessage('设备未连接，无法退出引导模式。', '#dc2626');
+                return;
+            }
+            setEsimMessage('正在强制退出 eSIM 引导模式...', '#2563eb');
+            const payload = await sendEsimCommand({ c: 'esim.onboard_exit' }, 'esim.onboard_exit', { maxWait: 10000 });
+            const errorText = esimCommandErrorText(payload, 'esim.onboard_exit');
+            if (errorText) {
+                setEsimMessage(errorText, '#dc2626');
+                return;
+            }
+            setEsimMessage('已退出引导模式，设备将恢复正常的注册流程。', '#16a34a');
+        }
+
         function queueEsimHttpsRelay(request) {
             refreshEsimRelayOwnership('https_relay');
             appendEsimLog(
@@ -2406,6 +2606,7 @@
             }
             return {
                 bytes,
+                rawBody: new TextDecoder().decode(bytes),
                 status: response.headers.get('X-Esim-HTTP-Status') || '-',
                 contentType: response.headers.get('X-Esim-HTTP-Content-Type') || '-',
                 resolvedUrl: response.headers.get('X-Esim-Resolved-URL') || url,
@@ -2426,7 +2627,14 @@
             setEsimMetric('esimStatusValue', 'https');
             setEsimMetric('esimOffsetValue', '0/0');
             setEsimMessage(`正在请求 eSIM HTTPS #${id || '-'}...`, '#2563eb');
-            appendEsimLog('esimHttpLog', `REQ #${id || '-'} ${url} smdp=${smdpAddress || '-'} body=${utf8ByteLength(body)} bytes`, '<');
+            appendEsimLog(
+                'esimHttpLog',
+                `REQ #${id || '-'} ${url} smdp=${smdpAddress || '-'} body=${utf8ByteLength(body)} bytes`,
+                '<',
+                body
+                    ? { label: `原始请求 Body (${utf8ByteLength(body)} bytes)`, body }
+                    : null
+            );
 
             const controller = new AbortController();
             esimDownloadState.abortController = controller;
@@ -2439,7 +2647,8 @@
             appendEsimLog(
                 'esimHttpLog',
                 `RESP #${id || '-'} ${httpResult.resolvedUrl} status=${httpResult.status} time=${httpResult.durationMs}ms type=${httpResult.contentType} body=${bytes.length} bytes`,
-                '>'
+                '>',
+                { label: `原始响应 Body (${bytes.length} bytes)`, body: httpResult.rawBody }
             );
 
             const beginPayload = await sendEsimCommand(
@@ -2535,7 +2744,7 @@
             if (eventName === 'esim.data') {
                 const code = getEsimPayloadCode(eventData);
                 if (code !== undefined && code !== 0) {
-                    setEsimMessage(`eSIM 数据块失败：${code}`, '#dc2626');
+                    setEsimMessage(`eSIM 数据块失败：${formatEsimResultCode(code)}`, '#dc2626');
                     return;
                 }
 
@@ -2550,9 +2759,10 @@
             if (eventName === 'esim.result') {
                 renderEsimResult(eventData.r);
                 const code = getEsimPayloadCode(eventData);
+                const codeText = formatEsimResultCode(code);
                 setEsimMetric('esimStatusValue', 'done');
-                setEsimMessage(`eSIM 下载结果：${code}`, code === 0 ? '#16a34a' : '#dc2626');
-                rejectEsimEventWaiters(makeEsimFlowStopError(`eSIM 下载结果：${code}`));
+                setEsimMessage(`eSIM 下载结果：${codeText}`, code === 0 ? '#16a34a' : '#dc2626');
+                rejectEsimEventWaiters(makeEsimFlowStopError(`eSIM 下载结果：${codeText}`));
                 releaseEsimRelayOwnership();
                 return;
             }
@@ -2560,7 +2770,7 @@
             if (eventName === 'esim.list') {
                 const code = getEsimPayloadCode(eventData);
                 if (code !== undefined && code !== 0) {
-                    setEsimMessage(`eSIM 列表查询失败：${code}`, '#dc2626');
+                    setEsimMessage(`eSIM 列表查询失败：${formatEsimResultCode(code)}`, '#dc2626');
                 } else {
                     renderEsimList(eventData);
                     setEsimMessage('eSIM profile 列表已更新。', '#16a34a');
@@ -2571,8 +2781,17 @@
             if (eventName === 'esim.enable' || eventName === 'esim.delete') {
                 const code = getEsimPayloadCode(eventData);
                 const ok = code === 0;
-                setEsimMessage(`${eventName} ${ok ? '成功' : `失败：${code}`}`, ok ? '#16a34a' : '#dc2626');
+                setEsimMessage(`${eventName} ${ok ? '成功' : `失败：${formatEsimResultCode(code)}`}`, ok ? '#16a34a' : '#dc2626');
             }
+        }
+
+        // 设备进入引导模式（无可用 profile）后，每 60s 重发的引导提醒事件。
+        // 形如 {"e":"esim-pending","r":{"st":"no_profile"},"ts":...}
+        function handleEsimPendingEvent(eventData) {
+            appendEsimEventLog(eventData);
+            const reason = eventData && eventData.r && eventData.r.st ? eventData.r.st : 'pending';
+            setEsimMetric('esimStatusValue', 'onboard');
+            setEsimMessage(`设备处于 eSIM 引导模式（${reason}），请写入可用 profile。`, '#d97706');
         }
 
         const esimActivationInput = document.getElementById('esimActivationCode');
@@ -3304,6 +3523,8 @@
             handleEsimList,
             handleEsimEnable,
             handleEsimDelete,
+            handleEsimOnboardEnter,
+            handleEsimOnboardExit,
             openWifiLocationPicker,
             clearWifiLocation
         });

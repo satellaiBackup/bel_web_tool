@@ -733,6 +733,29 @@
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }
 
+.esim-raw-body-details {
+  margin: 2px 0 8px 18px;
+  color: #bfdbfe;
+}
+
+.esim-raw-body-details summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.esim-raw-body {
+  max-height: 360px;
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow: auto;
+  color: #e5e7eb;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(147, 197, 253, 0.24);
+  border-radius: 6px;
+}
+
 .log-panel.is-focused {
   position: fixed;
   top: 92px;

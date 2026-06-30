@@ -35,7 +35,9 @@ function randomSmsId(): number {
 function sendNtnSms(): void {
   const nextSmsId = randomSmsId();
   currentSmsId.value = nextSmsId;
-  const idInput = document.getElementById("ntnSmsId") as HTMLInputElement | null;
+  const idInput = document.getElementById(
+    "ntnSmsId"
+  ) as HTMLInputElement | null;
   if (idInput) idInput.value = String(nextSmsId);
   props.bridge.call("handleNtnSmsSend");
 }
@@ -55,7 +57,7 @@ function sendNtnSms(): void {
           <h3>卫星短报文 / NTN</h3>
           <p>把模式控制、链路状态、环境切换和短报文收发集中到一个通讯面板。</p>
         </div>
-        <div id="ntnMessage" class="message-line"></div>
+        <div id="ntnMessage" class="message-line" />
       </div>
 
       <div class="ntn-layout">
@@ -153,7 +155,7 @@ function sendNtnSms(): void {
                 maxlength="140"
                 placeholder="卫星短报文文本，UTF-8 最大 140 字节"
                 disabled
-              ></textarea>
+              />
               <span><b id="ntnSmsByteCount">0</b>/140 bytes</span>
             </div>
             <div class="ntn-compose-footer">
@@ -207,9 +209,11 @@ function sendNtnSms(): void {
       <div class="card-heading split esim-heading">
         <div>
           <h3>eSIM 下发</h3>
-          <p>启动 profile 下载，并自动处理中途的 HTTPS 请求与响应体分块回传。</p>
+          <p>
+            启动 profile 下载，并自动处理中途的 HTTPS 请求与响应体分块回传。
+          </p>
         </div>
-        <div id="esimMessage" class="message-line"></div>
+        <div id="esimMessage" class="message-line" />
       </div>
 
       <div class="esim-layout">
@@ -228,7 +232,7 @@ function sendNtnSms(): void {
                   maxlength="256"
                   placeholder="LPA 激活码"
                   disabled
-                ></textarea>
+                />
                 <span><b id="esimActivationByteCount">0</b>/256 bytes</span>
               </div>
             </label>
@@ -275,6 +279,32 @@ function sendNtnSms(): void {
           </div>
         </section>
 
+        <section class="esim-panel esim-onboard-panel">
+          <div class="esim-panel-title">
+            <span>引导模式</span>
+          </div>
+          <p class="hint esim-onboard-hint">
+            当 profile
+            损坏或不可用时，可手动强制进入/退出引导模式，无需重启设备。
+          </p>
+          <div class="button-group esim-onboard-actions">
+            <button
+              class="cmd cmd-button"
+              disabled
+              @click="bridge.call('handleEsimOnboardEnter')"
+            >
+              进入引导模式
+            </button>
+            <button
+              class="cmd cmd-button secondary"
+              disabled
+              @click="bridge.call('handleEsimOnboardExit')"
+            >
+              退出引导模式
+            </button>
+          </div>
+        </section>
+
         <section class="esim-panel esim-list-panel">
           <div class="esim-panel-title">
             <span>Profile 列表</span>
@@ -286,7 +316,7 @@ function sendNtnSms(): void {
               刷新列表
             </button>
           </div>
-          <div id="esimListResult" class="esim-list-result"></div>
+          <div id="esimListResult" class="esim-list-result" />
         </section>
       </div>
 
@@ -439,7 +469,7 @@ function sendNtnSms(): void {
 }
 
 .esim-start-panel {
-  grid-row: span 2;
+  grid-row: span 3;
 }
 
 .esim-panel-title {
@@ -462,6 +492,19 @@ function sendNtnSms(): void {
 
 .esim-list-panel {
   align-content: start;
+}
+
+.esim-onboard-panel {
+  align-content: start;
+}
+
+.esim-onboard-hint {
+  margin: 0;
+  color: var(--ble-subtle);
+}
+
+.esim-onboard-actions {
+  align-items: stretch;
 }
 
 .esim-list-result {

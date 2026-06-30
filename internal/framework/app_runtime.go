@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 )
 
@@ -93,11 +92,9 @@ func handleManifest(staticRoot, manifestPath string) http.HandlerFunc {
 func handleStatic(staticRoot string) http.Handler {
 	fileServer := http.FileServer(http.Dir(staticRoot))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/legacy/") {
-			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
-			w.Header().Set("Pragma", "no-cache")
-			w.Header().Set("Expires", "0")
-		}
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
 		fileServer.ServeHTTP(w, r)
 	})
 }
