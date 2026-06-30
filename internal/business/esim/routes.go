@@ -95,19 +95,26 @@ func handleHTTPSRelay(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	relayPayload, err := serializeHTTPSResponse(resp, payload)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
 	duration := time.Since(startedAt)
-	recordTrace("HTTPS relay done url=%s status=%d body=%d duration=%s", targetURL, resp.StatusCode, len(payload), duration)
+	recordTrace("HTTPS relay done url=%s status=%d body=%d response=%d duration=%s", targetURL, resp.StatusCode, len(payload), len(relayPayload), duration)
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Esim-Direct", "1")
 	w.Header().Set("X-Esim-HTTP-Status", fmt.Sprintf("%d", resp.StatusCode))
+	w.Header().Set("X-Esim-HTTP-Body-Bytes", fmt.Sprintf("%d", len(payload)))
+	w.Header().Set("X-Esim-HTTP-Response-Bytes", fmt.Sprintf("%d", len(relayPayload)))
 	w.Header().Set("X-Esim-Resolved-URL", targetURL)
 	w.Header().Set("X-Esim-HTTP-Duration-Ms", fmt.Sprintf("%d", duration.Milliseconds()))
 	if contentType := resp.Header.Get("Content-Type"); contentType != "" {
 		w.Header().Set("X-Esim-HTTP-Content-Type", contentType)
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(payload)
+	_, _ = w.Write(relayPayload)
 }
 
 func applyGSMAHTTPSHeaders(req *http.Request) {
@@ -127,6 +134,24 @@ func httpsHostHeader(target *url.URL) string {
 		return net.JoinHostPort(target.Hostname(), "443")
 	}
 	return target.Host
+}
+
+func serializeHTTPSResponse(resp *http.Response, body []byte) ([]byte, error) {
+	relayResp := *resp
+	relayResp.Header = resp.Header.Clone()
+	relayResp.Body = io.NopCloser(bytes.NewReader(body))
+	relayResp.ContentLength = int64(len(body))
+	relayResp.TransferEncoding = nil
+	relayResp.Close = false
+	if relayResp.Header.Get("Content-Length") == "" {
+		relayResp.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	}
+
+	var raw bytes.Buffer
+	if err := relayResp.Write(&raw); err != nil {
+		return nil, fmt.Errorf("serialize HTTPS response: %w", err)
+	}
+	return raw.Bytes(), nil
 }
 
 func handleTrace(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +186,7 @@ func recordTrace(format string, args ...any) {
 func newHTTPSClient() (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	transport.DisableCompression = true
 	transport.TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true,
 	}

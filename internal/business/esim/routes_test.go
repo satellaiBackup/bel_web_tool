@@ -1,6 +1,7 @@
 package esim
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -78,6 +79,38 @@ func TestApplyGSMAHTTPSHeadersForPost(t *testing.T) {
 	}
 	if req.ContentLength != int64(len(body)) {
 		t.Fatalf("ContentLength = %d, want %d", req.ContentLength, len(body))
+	}
+}
+
+func TestSerializeHTTPSResponseIncludesStatusHeadersAndBody(t *testing.T) {
+	resp := &http.Response{
+		Status:        "202 Accepted",
+		StatusCode:    http.StatusAccepted,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Header:        make(http.Header),
+		Body:          io.NopCloser(strings.NewReader("ignored")),
+		ContentLength: -1,
+	}
+	resp.Header.Set("Content-Type", "application/json")
+	resp.Header.Set("X-Test", "ok")
+
+	got, err := serializeHTTPSResponse(resp, []byte(`{"ok":true}`))
+	if err != nil {
+		t.Fatalf("serializeHTTPSResponse returned error: %v", err)
+	}
+	text := string(got)
+	for _, want := range []string{
+		"HTTP/1.1 202 Accepted\r\n",
+		"Content-Type: application/json\r\n",
+		"X-Test: ok\r\n",
+		"Content-Length: 11\r\n",
+		"\r\n{\"ok\":true}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("serialized response does not contain %q; got:\n%s", want, text)
+		}
 	}
 }
 

@@ -2609,6 +2609,8 @@
                 rawBody: new TextDecoder().decode(bytes),
                 status: response.headers.get('X-Esim-HTTP-Status') || '-',
                 contentType: response.headers.get('X-Esim-HTTP-Content-Type') || '-',
+                bodyBytes: response.headers.get('X-Esim-HTTP-Body-Bytes') || '-',
+                responseBytes: response.headers.get('X-Esim-HTTP-Response-Bytes') || String(bytes.length),
                 resolvedUrl: response.headers.get('X-Esim-Resolved-URL') || url,
                 durationMs: response.headers.get('X-Esim-HTTP-Duration-Ms') || '-'
             };
@@ -2646,9 +2648,9 @@
             esimDownloadState.total = bytes.length;
             appendEsimLog(
                 'esimHttpLog',
-                `RESP #${id || '-'} ${httpResult.resolvedUrl} status=${httpResult.status} time=${httpResult.durationMs}ms type=${httpResult.contentType} body=${bytes.length} bytes`,
+                `RESP #${id || '-'} ${httpResult.resolvedUrl} status=${httpResult.status} time=${httpResult.durationMs}ms type=${httpResult.contentType} body=${httpResult.bodyBytes} bytes full=${httpResult.responseBytes} bytes`,
                 '>',
-                { label: `原始响应 Body (${bytes.length} bytes)`, body: httpResult.rawBody }
+                { label: `完整原始响应 (${bytes.length} bytes)`, body: httpResult.rawBody }
             );
 
             const beginPayload = await sendEsimCommand(
