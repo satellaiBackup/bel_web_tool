@@ -313,7 +313,7 @@ App                          MCU/模组                       SM-DP+
   "e": "esim.https_req",
   "r": {
     "id": 1,
-    "url": "https://smdp.example.com/oi/gsma/rsp2/es9plus/authenticateClient",
+    "url": "/oi/gsma/rsp2/es9plus/authenticateClient",
     "body": "<请求体，字符串，可能为空>",
     "smdpAddress": "smdp.example.com"
   }
@@ -322,9 +322,9 @@ App                          MCU/模组                       SM-DP+
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `id` | number | 请求序号，后续 `resp_begin`/`data` 必须带上同一 `id` |
-| `url` | string | 完整 HTTPS URL（已含协议） |
+| `url` | string | 请求**路径（网站目录）**，如 `/oi/gsma/rsp2/es9plus/authenticateClient`，**不含协议与域名**；需由 App 用 `smdpAddress` 拼接为完整 URL：`https://<smdpAddress><url>` |
 | `body` | string | 请求体（可能为 `""`），UTF-8 文本 |
-| `smdpAddress` | string | SM-DP+ 地址（可选，中转代理路由用） |
+| `smdpAddress` | string | SM-DP+ 域名（与 `esim.start` 激活码中解析出的地址一致），App 据此与 `url` 拼接出完整请求地址 |
 
 > App 收到后应**幂等去重**：同一条 `https_req`（按 `id`+`url`+`body` 组合 key）可能因重发被收到多次，只应处理一次。
 
@@ -338,6 +338,8 @@ Content-Type: application/json
 
 { "url": "<https_req.r.url>", "body": "<https_req.r.body>", "smdpAddress": "<https_req.r.smdpAddress>" }
 ```
+
+> `url` 只是路径（不含域名）。中转代理转发时会用 `smdpAddress` 拼接为 `https://<smdpAddress><url>` 再发起请求；实现上同时兼容相对路径与极少数模组直接给出完整 `https://...` URL 的情况。
 
 响应体为**原始二进制字节流**（`application/octet-stream`，不要按 JSON 解析）。响应头里可能含调试信息（`X-Esim-HTTP-Status`、`X-Esim-HTTP-Content-Type`、`X-Esim-HTTP-Body-Bytes`、`X-Esim-HTTP-Response-Bytes`、`X-Esim-Resolved-URL`、`X-Esim-HTTP-Duration-Ms`），仅用于日志，不影响协议。
 
@@ -408,7 +410,7 @@ App 请求：
 → {"c":"esim.start","p":{"ac":"LPA:1$smdp.example.com$ABC123"}}
 ← {"c":"esim.start","r":512}
 ← {"e":"esim.status","r":"downloading"}
-← {"e":"esim.https_req","r":{"id":1,"url":"https://smdp.example.com/authenticateClient","body":"...","smdpAddress":"smdp.example.com"}}
+← {"e":"esim.https_req","r":{"id":1,"url":"/oi/gsma/rsp2/es9plus/authenticateClient","body":"...","smdpAddress":"smdp.example.com"}}
 
    (App POST /api/esim/https，拿到 4096 字节响应体)
 
