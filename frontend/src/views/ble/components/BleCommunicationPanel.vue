@@ -237,14 +237,6 @@ function sendNtnSms(): void {
               </div>
             </label>
             <div class="inline-controls">
-              <input
-                id="esimConfirmationCode"
-                type="text"
-                class="cmd cmd-input admin-input"
-                maxlength="40"
-                placeholder="确认码 CC，可选"
-                disabled
-              />
               <button
                 class="cmd cmd-button"
                 disabled

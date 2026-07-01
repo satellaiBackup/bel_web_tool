@@ -1772,7 +1772,6 @@
         let esimEventWaiters = [];
         const ESIM_DEFAULT_CHUNK_LIMIT = 512;
         const ESIM_ACTIVATION_CODE_MAX_BYTES = 256;
-        const ESIM_CONFIRMATION_CODE_MAX_BYTES = 40;
         const ESIM_RELAY_CLIENT_ID = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
         const ESIM_RELAY_OWNER_KEY = 'ble_web_tool.esim.relay.owner';
         const ESIM_RELAY_REQUEST_PREFIX = 'ble_web_tool.esim.relay.request.';
@@ -2412,11 +2411,8 @@
 
         async function handleEsimStart() {
             const acInput = document.getElementById('esimActivationCode');
-            const ccInput = document.getElementById('esimConfirmationCode');
             const ac = (acInput?.value || '').trim();
-            const cc = (ccInput?.value || '').trim();
             const acBytes = utf8ByteLength(ac);
-            const ccBytes = utf8ByteLength(cc);
 
             if (!ac) {
                 setEsimMessage('请输入 eSIM 激活码 AC。', '#dc2626');
@@ -2427,11 +2423,6 @@
                 setEsimMessage(`AC 不能超过 ${ESIM_ACTIVATION_CODE_MAX_BYTES} 字节。`, '#dc2626');
                 acInput && acInput.focus();
                 updateEsimActivationByteCount();
-                return;
-            }
-            if (ccBytes > ESIM_CONFIRMATION_CODE_MAX_BYTES) {
-                setEsimMessage(`CC 不能超过 ${ESIM_CONFIRMATION_CODE_MAX_BYTES} 字节。`, '#dc2626');
-                ccInput && ccInput.focus();
                 return;
             }
             const smdpAddress = parseSmdpAddressFromActivationCode(ac);
@@ -2453,7 +2444,6 @@
             }
 
             const command = { c: 'esim.start', p: { ac } };
-            if (cc) command.p.cc = cc;
 
             resetEsimProgress();
             clearEsimRelayRequestLocks();
