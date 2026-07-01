@@ -2244,13 +2244,17 @@
         }
 
         function refreshEsimProfileActionButtons() {
-            // 连接状态变化由 .cmd 统一控制，这里仅根据行内状态刷新启用按钮。
+            // 连接状态变化由 .cmd 统一控制，这里仅根据行内状态刷新启用/禁用按钮。
             const rows = document.querySelectorAll('#esimListResult .esim-profile-row');
             rows.forEach(row => {
                 const enabled = row.dataset.enabled === '1';
                 const enableBtn = row.querySelector('.esim-row-enable');
                 if (enableBtn) {
                     enableBtn.disabled = enabled || !isDeviceConnected();
+                }
+                const disableBtn = row.querySelector('.esim-row-disable');
+                if (disableBtn) {
+                    disableBtn.disabled = !enabled || !isDeviceConnected();
                 }
             });
         }
@@ -2305,11 +2309,20 @@
 
                 const enableBtn = document.createElement('button');
                 enableBtn.type = 'button';
-                enableBtn.className = 'cmd cmd-button';
+                enableBtn.className = 'cmd cmd-button esim-row-enable';
                 enableBtn.textContent = '启用';
                 enableBtn.disabled = profile.enabled || !isDeviceConnected();
                 enableBtn.addEventListener('click', () => {
                     handleEsimEnable(profile.iccid);
+                });
+
+                const disableBtn = document.createElement('button');
+                disableBtn.type = 'button';
+                disableBtn.className = 'cmd cmd-button secondary esim-row-disable';
+                disableBtn.textContent = '禁用';
+                disableBtn.disabled = !profile.enabled || !isDeviceConnected();
+                disableBtn.addEventListener('click', () => {
+                    handleEsimDisable(profile.iccid);
                 });
 
                 const deleteBtn = document.createElement('button');
@@ -2322,6 +2335,7 @@
                 });
 
                 actions.appendChild(enableBtn);
+                actions.appendChild(disableBtn);
                 actions.appendChild(deleteBtn);
                 row.appendChild(actions);
 
@@ -2513,6 +2527,23 @@
                 return;
             }
             setEsimMessage('启用命令已受理，等待最终事件。', '#16a34a');
+        }
+
+        async function handleEsimDisable(iccid) {
+            const targetIccid = escapeEsimIccid(iccid);
+            if (!targetIccid) {
+                setEsimMessage('请提供要禁用的 ICCID。', '#dc2626');
+                return;
+            }
+
+            setEsimMessage(`正在禁用 ICCID ${targetIccid}...`, '#2563eb');
+            const payload = await sendEsimCommand({ c: 'esim.disable', p: { iccid: targetIccid } }, 'esim.disable', { maxWait: 10000 });
+            const errorText = esimCommandErrorText(payload, 'esim.disable');
+            if (errorText) {
+                setEsimMessage(errorText, '#dc2626');
+                return;
+            }
+            setEsimMessage('禁用命令已受理，等待最终事件。', '#16a34a');
         }
 
         async function handleEsimDelete(iccid) {
@@ -2780,7 +2811,7 @@
                 return;
             }
 
-            if (eventName === 'esim.enable' || eventName === 'esim.delete') {
+            if (eventName === 'esim.enable' || eventName === 'esim.disable' || eventName === 'esim.delete') {
                 const code = getEsimPayloadCode(eventData);
                 const ok = code === 0;
                 setEsimMessage(`${eventName} ${ok ? '成功' : `失败：${formatEsimResultCode(code)}`}`, ok ? '#16a34a' : '#dc2626');
@@ -3524,6 +3555,7 @@
             handleEsimCancel,
             handleEsimList,
             handleEsimEnable,
+            handleEsimDisable,
             handleEsimDelete,
             handleEsimOnboardEnter,
             handleEsimOnboardExit,

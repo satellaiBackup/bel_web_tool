@@ -576,7 +576,14 @@ function sendNtnSms(): void {
 .esim-profile-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   flex: none;
+}
+
+.esim-row-enable,
+.esim-row-disable {
+  min-width: 58px;
 }
 
 .esim-log-layout {
