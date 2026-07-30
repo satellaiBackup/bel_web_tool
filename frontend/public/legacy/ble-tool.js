@@ -266,8 +266,8 @@
 
         async function scanBleDevices() {
             const prefixInput = document.getElementById('nameFilter');
-            const prefix = prefixInput.value.trim() || 'SATELLAI';
-            saveNameFilter(prefixInput.value.trim());
+            const prefix = prefixInput.value.trim();
+            saveNameFilter(prefix);
             const state = await syncBleStateFromBackend();
 
             if (state && state.connected) {
