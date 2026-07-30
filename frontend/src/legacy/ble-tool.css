@@ -668,6 +668,70 @@
   gap: 8px;
 }
 
+.quick-command-browser,
+.quick-command-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.quick-command-tabs {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  padding-bottom: 2px;
+  overflow-x: auto;
+}
+
+.quick-command-tab {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 7px;
+  min-height: 34px;
+  align-items: center;
+  border: 1px solid var(--ble-border);
+  border-radius: 999px;
+  background: var(--ble-surface);
+  color: var(--ble-subtle);
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.quick-command-tab span {
+  display: inline-flex;
+  min-width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--ble-surface-muted);
+  color: var(--ble-faint);
+  font-size: 11px;
+}
+
+.quick-command-tab:hover,
+.quick-command-tab.is-active {
+  border-color: var(--ble-primary);
+  color: var(--ble-primary-deep);
+}
+
+.quick-command-tab.is-active {
+  background: var(--ble-surface-soft);
+}
+
+.quick-command-tab.is-active span {
+  background: var(--ble-primary);
+  color: #ffffff;
+}
+
+.quick-command-panel > p {
+  color: var(--ble-subtle);
+  font-size: 12px;
+}
+
 .command-chip-grid {
   grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
 }
@@ -1095,6 +1159,7 @@ html.dark .metric-card {
 
 html.dark .module-tabs button.is-active,
 html.dark .module-tabs button:hover,
+html.dark .quick-command-tab,
 html.dark .log-actions button,
 html.dark .side-log-grid button,
 html.dark .log-focus-header {

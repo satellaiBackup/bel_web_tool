@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, ref } from "vue";
 import type { LegacyBridge } from "../types";
 import BleLogPanel from "./BleLogPanel.vue";
 
@@ -11,24 +12,56 @@ defineProps<{
   focusedLogId: string | null;
 }>();
 
-const appQuickCommands = [
-  { label: "查询版本号", command: '{"c":"v"}' },
-  { label: "查询电量", command: '{"c":"b"}' },
-  { label: "查围栏状态", command: '{"c":"f"}' },
-  { label: "开启围栏", command: '{"c":"f1"}' },
-  { label: "关闭围栏", command: '{"c":"f0"}', tone: "secondary" },
-  { label: "查激活围栏", command: '{"c":"fe"}' },
-  { label: "查围栏列表", command: '{"c":"fl"}' },
-  { label: "查询时间", command: '{"c":"st"}' },
-  { label: "片内查询目录", command: '{"c":"dir"}' },
-  { label: "查询剩余空间", command: '{"c":"ss"}' },
-  { label: "查询设备信息", command: '{"c":"di"}' },
-  { label: "重启设备", command: '{"c":"sys.reboot"}', tone: "warning" },
-  { label: "船运模式", command: '{"c":"sys.poweroff"}', tone: "warning" },
-  { label: "Info Dump", command: '{"c":"?"}' },
-  { label: "格式化 Flash", command: '{"c":"sec.format"}', tone: "danger" },
-  { label: "重置 Setting", command: '{"c":"settings.format"}', tone: "danger" }
+const appQuickCommandGroups = [
+  {
+    id: "status",
+    label: "常用查询",
+    description: "设备、网络、定位和运行模式",
+    commands: [
+      { label: "查询版本号", command: '{"c":"v"}' },
+      { label: "查询电量", command: '{"c":"b"}' },
+      { label: "查询设备信息", command: '{"c":"di"}' },
+      { label: "查询网络状态", command: '{"c":"network.status"}' },
+      { label: "查询 GNSS 状态", command: '{"c":"g"}' },
+      { label: "查询省电模式", command: '{"c":"power_saving"}' },
+      { label: "查询运行态汇总", command: '{"c":"?"}' }
+    ]
+  },
+  {
+    id: "fence",
+    label: "围栏",
+    description: "查询围栏列表和当前激活项",
+    commands: [
+      { label: "查询围栏列表", command: '{"c":"fl"}' },
+      { label: "查询激活围栏", command: '{"c":"fe"}' },
+      { label: "清空全部围栏", command: '{"c":"fc"}', tone: "danger" }
+    ]
+  },
+  {
+    id: "system",
+    label: "系统与存储",
+    description: "会改变设备状态，请确认后执行",
+    commands: [
+      { label: "输出设置日志", command: '{"c":"sd"}', tone: "secondary" },
+      { label: "重启设备", command: '{"c":"sys.reboot"}', tone: "warning" },
+      { label: "船运模式", command: '{"c":"sys.poweroff"}', tone: "warning" },
+      { label: "格式化 Flash", command: '{"c":"sec.format"}', tone: "danger" },
+      {
+        label: "恢复出厂设置",
+        command: '{"c":"factory-reset"}',
+        tone: "danger"
+      }
+    ]
+  }
 ];
+
+const activeQuickCommandGroupId = ref(appQuickCommandGroups[0].id);
+const activeQuickCommandGroup = computed(
+  () =>
+    appQuickCommandGroups.find(
+      group => group.id === activeQuickCommandGroupId.value
+    ) ?? appQuickCommandGroups[0]
+);
 </script>
 
 <template>
@@ -89,20 +122,52 @@ const appQuickCommands = [
       <div class="card-heading">
         <div>
           <h3>APP 快捷命令</h3>
-          <p>高频 APP JSON 命令集中入口。</p>
+          <p>D1、S1、T1 均支持的无参数 JSON 命令。</p>
         </div>
       </div>
-      <div class="button-grid">
-        <button
-          v-for="item in appQuickCommands"
-          :key="item.command"
-          class="cmd cmd-button"
-          :class="item.tone"
-          disabled
-          @click="bridge.sendAppCommand(item.command)"
+      <div class="quick-command-browser">
+        <div
+          class="quick-command-tabs"
+          role="tablist"
+          aria-label="快捷命令分类"
         >
-          {{ item.label }}
-        </button>
+          <button
+            v-for="group in appQuickCommandGroups"
+            :id="`quick-command-tab-${group.id}`"
+            :key="group.id"
+            type="button"
+            role="tab"
+            class="quick-command-tab"
+            :class="{ 'is-active': activeQuickCommandGroupId === group.id }"
+            :aria-selected="activeQuickCommandGroupId === group.id"
+            :aria-controls="`quick-command-panel-${group.id}`"
+            @click="activeQuickCommandGroupId = group.id"
+          >
+            {{ group.label }}
+            <span>{{ group.commands.length }}</span>
+          </button>
+        </div>
+        <div
+          :id="`quick-command-panel-${activeQuickCommandGroup.id}`"
+          class="quick-command-panel"
+          role="tabpanel"
+          :aria-labelledby="`quick-command-tab-${activeQuickCommandGroup.id}`"
+        >
+          <p>{{ activeQuickCommandGroup.description }}</p>
+          <div class="button-grid">
+            <button
+              v-for="item in activeQuickCommandGroup.commands"
+              :key="item.command"
+              class="cmd cmd-button"
+              :class="item.tone"
+              :title="item.command"
+              disabled
+              @click="bridge.sendAppCommand(item.command)"
+            >
+              {{ item.label }}
+            </button>
+          </div>
+        </div>
       </div>
       <BleLogPanel
         title="APP 命令响应"
