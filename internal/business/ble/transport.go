@@ -79,7 +79,7 @@ func newBLETransportState() *bleTransportState {
 	}
 }
 
-func (m *bleManager) writeCharacteristicAuto(serviceUUID, characteristicUUID string, payload []byte, transportChannel *int) error {
+func (m *bleManager) writeCharacteristicAuto(serviceUUID, characteristicUUID string, payload []byte, transportChannel *int) (resultErr error) {
 	normalizedServiceUUID, err := normalizeUUID(serviceUUID)
 	if err != nil {
 		return err
@@ -102,7 +102,12 @@ func (m *bleManager) writeCharacteristicAuto(serviceUUID, characteristicUUID str
 	}
 
 	conn.opMu.Lock()
-	defer conn.opMu.Unlock()
+	defer func() {
+		conn.opMu.Unlock()
+		if errors.Is(resultErr, errBLEGATTSessionUnavailable) {
+			m.invalidateConnection(conn, resultErr)
+		}
+	}()
 
 	char, key, err := m.getCharacteristicLocked(conn, normalizedServiceUUID, normalizedCharUUID)
 	if err != nil {
@@ -418,7 +423,7 @@ func writeBLECharacteristic(char bluetooth.DeviceCharacteristic, key string, pay
 	if _, err := char.Write(payload); err == nil {
 		return nil
 	} else {
-		return fmt.Errorf("写入特征失败 %s: %w", key, err)
+		return newBLEGATTSessionError(fmt.Sprintf("写入特征失败 %s", key), err)
 	}
 }
 

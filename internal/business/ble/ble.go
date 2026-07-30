@@ -26,6 +26,8 @@ const (
 	bleConnectionReadyDelay = 1200 * time.Millisecond
 )
 
+var errBLEGATTSessionUnavailable = errors.New("BLE GATT 会话失效")
+
 type bleManager struct {
 	adapter *bluetooth.Adapter
 
@@ -178,10 +180,12 @@ func (m *bleManager) handleConnectEvent(device bluetooth.Device, connected bool)
 		Address:   strings.ToUpper(device.Address.String()),
 	}
 
+	shouldBroadcast := connected
 	m.mu.Lock()
 	current := m.connection
 	if !connected && current != nil && strings.EqualFold(current.address, event.Address) {
 		m.connection = nil
+		shouldBroadcast = true
 	}
 	m.mu.Unlock()
 
@@ -190,7 +194,9 @@ func (m *bleManager) handleConnectEvent(device bluetooth.Device, connected bool)
 	} else {
 		event.Type = "disconnected"
 	}
-	m.broadcast(event)
+	if shouldBroadcast {
+		m.broadcast(event)
+	}
 }
 
 func (m *bleManager) handleScan(w http.ResponseWriter, r *http.Request) {
@@ -669,6 +675,34 @@ func (m *bleManager) disconnect() error {
 	return nil
 }
 
+func (m *bleManager) clearConnectionIfCurrent(conn *bleConnection) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if conn == nil || m.connection != conn {
+		return false
+	}
+	m.connection = nil
+	return true
+}
+
+func (m *bleManager) invalidateConnection(conn *bleConnection, cause error) {
+	if !m.clearConnectionIfCurrent(conn) {
+		return
+	}
+
+	log.Printf("[ble] invalidating stale GATT connection address=%s err=%v", conn.address, cause)
+	m.broadcast(bleEvent{
+		Type:      "disconnected",
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Address:   conn.address,
+		Name:      conn.name,
+		Error:     cause.Error(),
+	})
+	if err := conn.device.Disconnect(); err != nil {
+		log.Printf("[ble] stale GATT disconnect failed address=%s err=%v", conn.address, err)
+	}
+}
+
 func (m *bleManager) state() bleStateResponse {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -698,9 +732,12 @@ func (m *bleManager) enableNotifications(serviceUUID, characteristicUUID string)
 	}
 
 	conn.opMu.Lock()
-	defer conn.opMu.Unlock()
-
-	return m.enableNotificationsLocked(conn, serviceUUID, characteristicUUID)
+	err = m.enableNotificationsLocked(conn, serviceUUID, characteristicUUID)
+	conn.opMu.Unlock()
+	if errors.Is(err, errBLEGATTSessionUnavailable) {
+		m.invalidateConnection(conn, err)
+	}
+	return err
 }
 
 func (m *bleManager) enableNotificationsLocked(conn *bleConnection, serviceUUID, characteristicUUID string) error {
@@ -740,7 +777,7 @@ func (m *bleManager) enableNotificationsLocked(conn *bleConnection, serviceUUID,
 			Data:               base64.StdEncoding.EncodeToString(copyBuf),
 		})
 	}); err != nil {
-		return fmt.Errorf("开启通知失败 %s: %w", key, err)
+		return newBLEGATTSessionError(fmt.Sprintf("开启通知失败 %s", key), err)
 	}
 
 	conn.notifyState[key] = true
@@ -813,7 +850,7 @@ func (m *bleManager) getCharacteristicLocked(conn *bleConnection, serviceUUID, c
 
 	services, err := discoverServicesWithRetry(conn.device, []bluetooth.UUID{serviceID})
 	if err != nil {
-		return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("发现服务失败: %w", err)
+		return bluetooth.DeviceCharacteristic{}, key, newBLEGATTSessionError("发现服务失败", err)
 	}
 	if len(services) == 0 {
 		return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("未找到服务 %s", normalizedServiceUUID)
@@ -821,7 +858,7 @@ func (m *bleManager) getCharacteristicLocked(conn *bleConnection, serviceUUID, c
 
 	chars, err := discoverCharacteristicsWithRetry(services[0], []bluetooth.UUID{charID})
 	if err != nil {
-		return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("发现特征失败: %w", err)
+		return bluetooth.DeviceCharacteristic{}, key, newBLEGATTSessionError("发现特征失败", err)
 	}
 	if len(chars) == 0 {
 		return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("未找到特征 %s", normalizedCharUUID)
@@ -829,6 +866,10 @@ func (m *bleManager) getCharacteristicLocked(conn *bleConnection, serviceUUID, c
 
 	conn.charCache[key] = chars[0]
 	return chars[0], key, nil
+}
+
+func newBLEGATTSessionError(operation string, err error) error {
+	return fmt.Errorf("%w: %s: %v", errBLEGATTSessionUnavailable, operation, err)
 }
 
 func discoverServicesWithRetry(device bluetooth.Device, filter []bluetooth.UUID) ([]bluetooth.DeviceService, error) {
