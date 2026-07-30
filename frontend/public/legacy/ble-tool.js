@@ -1277,7 +1277,7 @@
         // New helper function to send app commands and display response
         async function sendAppCommandViaBle(jsonString, options = {}) {
             const {
-                containerSelector = '#appAdvancedCommandsSection',
+                containerSelector = '#commandConsoleSection',
                 logElementId = 'appCmdRspLog',
                 labelPrefix = 'APP',
                 responseTimeout = DEFAULT_APP_RESPONSE_TIMEOUT,
@@ -1298,7 +1298,7 @@
 
             const logElement = document.getElementById(logElementId);
             if (logElement) {
-                appendLog(logElement, `SENT(${labelPrefix}): ${jsonString}\n`, '<');
+                appendLog(logElement, `SENDING(${labelPrefix}): ${jsonString}\n`, '<');
                 logElement.scrollTop = logElement.scrollHeight;
             }
 
@@ -1309,22 +1309,33 @@
 
             try {
                 if (peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected) {
+                    const inactivityMs = Math.max(50, responseTimeout);
+                    const overallMs = Math.max(inactivityMs, maxWait);
+                    let responseState = null;
                     const responsePromise = new Promise(resolve => {
                         if (pendingAppResponse) flushPendingAppResponse();
-                        const inactivityMs = Math.max(50, responseTimeout);
-                        const overallMs = Math.max(inactivityMs, maxWait);
-                        pendingAppResponse = {
+                        responseState = {
                             resolve,
                             buffer: '',
                             inactivityTimer: null,
                             inactivityMs,
                             expectedCommand: options.expectedCommand || null,
-                            overallTimer: setTimeout(() => {
-                                flushPendingAppResponse();
-                            }, overallMs)
+                            overallTimer: null
                         };
+                        pendingAppResponse = responseState;
                     });
                     await peripheral.sendCmd(uuidSvcSatellai, uuidCharApp, jsonString);
+                    if (logElement) {
+                        appendLog(logElement, `SENT(${labelPrefix}): ${jsonString}\n`, '<');
+                        logElement.scrollTop = logElement.scrollHeight;
+                    }
+                    if (pendingAppResponse === responseState) {
+                        responseState.overallTimer = setTimeout(() => {
+                            if (pendingAppResponse === responseState) {
+                                flushPendingAppResponse();
+                            }
+                        }, overallMs);
+                    }
                     const rsp = await responsePromise;
                     if (logElement && String(rsp ?? '').length > 0) {
                         appendLog(logElement, `RESP(${labelPrefix}): ${rsp}\n`, '>');
