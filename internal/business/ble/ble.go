@@ -850,6 +850,9 @@ func (m *bleManager) getCharacteristicLocked(conn *bleConnection, serviceUUID, c
 
 	services, err := discoverServicesWithRetry(conn.device, []bluetooth.UUID{serviceID})
 	if err != nil {
+		if isBLEAttributeNotFoundError(err) {
+			return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("未找到服务 %s: %w", normalizedServiceUUID, err)
+		}
 		return bluetooth.DeviceCharacteristic{}, key, newBLEGATTSessionError("发现服务失败", err)
 	}
 	if len(services) == 0 {
@@ -858,6 +861,9 @@ func (m *bleManager) getCharacteristicLocked(conn *bleConnection, serviceUUID, c
 
 	chars, err := discoverCharacteristicsWithRetry(services[0], []bluetooth.UUID{charID})
 	if err != nil {
+		if isBLEAttributeNotFoundError(err) {
+			return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("未找到特征 %s: %w", normalizedCharUUID, err)
+		}
 		return bluetooth.DeviceCharacteristic{}, key, newBLEGATTSessionError("发现特征失败", err)
 	}
 	if len(chars) == 0 {
@@ -870,6 +876,15 @@ func (m *bleManager) getCharacteristicLocked(conn *bleConnection, serviceUUID, c
 
 func newBLEGATTSessionError(operation string, err error) error {
 	return fmt.Errorf("%w: %s: %v", errBLEGATTSessionUnavailable, operation, err)
+}
+
+func isBLEAttributeNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "did not find all requested service") ||
+		strings.Contains(message, "did not find all requested characteristic")
 }
 
 func discoverServicesWithRetry(device bluetooth.Device, filter []bluetooth.UUID) ([]bluetooth.DeviceService, error) {

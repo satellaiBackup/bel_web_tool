@@ -35,3 +35,24 @@ func TestBLEGATTSessionError(t *testing.T) {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }
+
+func TestBLEAttributeNotFoundError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "service missing", err: errors.New("bluetooth: did not find all requested services"), want: true},
+		{name: "characteristic missing", err: errors.New("bluetooth: did not find all requested characteristic"), want: true},
+		{name: "GATT unavailable", err: errors.New("could not retrieve device services, operation failed with code 1"), want: false},
+		{name: "nil", err: nil, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isBLEAttributeNotFoundError(tt.err); got != tt.want {
+				t.Fatalf("isBLEAttributeNotFoundError() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

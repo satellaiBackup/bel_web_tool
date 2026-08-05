@@ -695,6 +695,16 @@
             peripheral.transportReady = true;
         }
 
+        async function tryStartDefaultBleNotifications(label, svc, ch, listener) {
+            try {
+                await peripheral.startCmdNotifications(svc, ch, listener);
+                return true;
+            } catch (error) {
+                console.warn(`[WARN] ${label} 通知订阅失败，连接保持可用:`, error);
+                return false;
+            }
+        }
+
         async function startDefaultBleNotifications() {
             peripheral.notificationListeners.clear();
             peripheral.notificationSubscriptions.clear();
@@ -719,7 +729,7 @@
                 }
             }
 
-            await peripheral.startCmdNotifications(uuidSvcNus, uuidCharNotify, event => {
+            await tryStartDefaultBleNotifications('NUS', uuidSvcNus, uuidCharNotify, event => {
                 const text = new TextDecoder().decode(event.target.value);
                 const lbl = document.getElementById('customCmdRsp');
                 if (lbl) {
@@ -741,7 +751,7 @@
                 }
             });
 
-            await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharApp, event => {
+            await tryStartDefaultBleNotifications('APP', uuidSvcSatellai, uuidCharApp, event => {
                 const text = new TextDecoder().decode(event.target.value);
                 const channel = event.target.transportChannel;
                 const source = channel === undefined || channel === null ? 'APP' : `TP[CH=${channel}]`;
@@ -774,7 +784,7 @@
                 }
             });
 
-            await peripheral.startCmdNotifications(uuidSvcSatellai, uuidCharDfu, event => {
+            await tryStartDefaultBleNotifications('DFU', uuidSvcSatellai, uuidCharDfu, event => {
                 if (resolveDfu) {
                     resolveDfu(event.target.value);
                     resolveDfu = null;
