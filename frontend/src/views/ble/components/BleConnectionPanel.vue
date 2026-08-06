@@ -1,17 +1,31 @@
 <script setup lang="ts">
+import { computed } from "vue";
+import {
+  getBleConnectionControls,
+  type BleConnectionState
+} from "../connectionState";
 import type { LegacyBridge } from "../types";
 
 defineOptions({
   name: "BleConnectionPanel"
 });
 
-defineProps<{
+const props = defineProps<{
   bridge: LegacyBridge;
+  state: BleConnectionState;
 }>();
+
+const controls = computed(() => getBleConnectionControls(props.state));
 </script>
 
 <template>
-  <section id="connectionSection" class="admin-hero">
+  <section
+    id="connectionSection"
+    class="admin-hero"
+    :data-ble-state="state.phase"
+    :data-event-stream-state="state.eventStream"
+    :aria-busy="controls.busy"
+  >
     <div class="hero-copy">
       <div class="admin-brand compact-brand">
         <div class="admin-brand-mark">BLE</div>
@@ -27,8 +41,13 @@ defineProps<{
 
     <div class="connection-panel">
       <div class="connection-status">
-        <span class="status-dot"></span>
-        <label id="status">待连接</label>
+        <span class="status-dot" :data-state="state.phase"></span>
+        <label id="status" role="status" aria-live="polite">
+          {{ state.statusText }}
+        </label>
+      </div>
+      <div v-if="state.error" class="connection-error" role="alert">
+        {{ state.error }}
       </div>
       <div class="connection-controls ble-connection-controls">
         <label class="form-field">
@@ -38,11 +57,16 @@ defineProps<{
             type="text"
             placeholder="设备名称前缀，例如 SATELLAI"
             class="admin-input"
+            :disabled="controls.filtersDisabled"
           />
         </label>
         <label class="form-field form-field-wide">
           <span>设备列表</span>
-          <select id="deviceSelect" class="admin-input">
+          <select
+            id="deviceSelect"
+            class="admin-input"
+            :disabled="controls.filtersDisabled || state.scanCount === 0"
+          >
             <option value="">请先扫描设备</option>
           </select>
         </label>
@@ -52,15 +76,19 @@ defineProps<{
             type="button"
             class="cmd-button"
             data-vue-action="true"
+            :disabled="controls.scanDisabled"
+            :aria-busy="state.phase === 'scanning'"
             @click="bridge.call('scanBleDevices')"
           >
-            扫描设备
+            {{ controls.scanLabel }}
           </button>
           <button
             id="scanAndConnect"
             type="button"
             class="cmd-button"
             data-vue-action="true"
+            :disabled="controls.connectDisabled"
+            :aria-busy="state.phase === 'connecting'"
             @click="bridge.call('connectSelectedDevice')"
           >
             连接设备
@@ -70,10 +98,24 @@ defineProps<{
             type="button"
             class="cmd-button danger"
             data-vue-action="true"
-            hidden
+            v-show="controls.disconnectVisible"
+            :disabled="controls.disconnectDisabled"
+            :aria-busy="state.phase === 'disconnecting'"
             @click="bridge.call('disconnectBleDevice')"
           >
             断开连接
+          </button>
+          <button
+            id="reconnect"
+            type="button"
+            class="cmd-button"
+            data-vue-action="true"
+            v-show="controls.reconnectVisible"
+            :disabled="controls.reconnectDisabled"
+            :aria-busy="state.phase === 'reconnecting'"
+            @click="bridge.call('reconnectLastBleDevice')"
+          >
+            重新连接
           </button>
         </div>
       </div>
@@ -94,7 +136,7 @@ defineProps<{
 
 .connection-action-stack {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   align-items: end;
   justify-content: stretch;

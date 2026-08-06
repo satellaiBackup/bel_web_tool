@@ -11,7 +11,11 @@ defineProps<{
 </script>
 
 <template>
-  <section id="positioningSection" class="admin-section">
+  <section
+    id="positioningSection"
+    class="admin-section"
+    data-ble-requires="app"
+  >
     <div class="section-heading">
       <p class="eyebrow">Positioning</p>
       <h2>定位</h2>

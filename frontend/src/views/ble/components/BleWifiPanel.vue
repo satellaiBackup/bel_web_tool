@@ -34,7 +34,11 @@ const wifiResultPanels = [
 </script>
 
 <template>
-  <section id="wifiCommandsSection" class="admin-section">
+  <section
+    id="wifiCommandsSection"
+    class="admin-section"
+    data-ble-requires="app"
+  >
     <div class="section-heading">
       <p class="eyebrow">Wi-Fi Beacon</p>
       <h2>Wi-Fi 信标工具</h2>

@@ -44,7 +44,11 @@ function sendNtnSms(): void {
 </script>
 
 <template>
-  <section id="communicationSection" class="admin-section">
+  <section
+    id="communicationSection"
+    class="admin-section"
+    data-ble-requires="app"
+  >
     <div class="section-heading">
       <p class="eyebrow">Communication</p>
       <h2>通讯</h2>
@@ -217,7 +221,10 @@ function sendNtnSms(): void {
       </div>
 
       <div class="esim-layout">
-        <section class="esim-panel esim-start-panel">
+        <section
+          class="esim-panel esim-start-panel"
+          data-ble-requires="app transport"
+        >
           <div class="esim-panel-title">
             <span>下载参数</span>
           </div>

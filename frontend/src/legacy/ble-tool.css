@@ -291,6 +291,38 @@
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.13);
 }
 
+.status-dot[data-state="idle"],
+.status-dot[data-state="scan_empty"] {
+  background: var(--ble-subtle);
+  box-shadow: 0 0 0 4px rgba(100, 116, 139, 0.13);
+}
+
+.status-dot[data-state="connected"] {
+  background: var(--ble-success);
+  box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.13);
+}
+
+.status-dot[data-state="connected_partial"] {
+  background: #d97706;
+  box-shadow: 0 0 0 4px rgba(217, 119, 6, 0.13);
+}
+
+.status-dot[data-state="scan_failed"],
+.status-dot[data-state="connect_failed"],
+.status-dot[data-state="disconnected"],
+.status-dot[data-state="backend_unavailable"] {
+  background: var(--ble-danger);
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.13);
+}
+
+.connection-error {
+  color: var(--ble-danger);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .connection-controls {
   display: grid;
   grid-template-columns: minmax(150px, 0.72fr) minmax(220px, 1fr) auto;

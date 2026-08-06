@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,13 @@ var errBLEGATTSessionUnavailable = errors.New("BLE GATT 会话失效")
 
 type bleManager struct {
 	adapter *bluetooth.Adapter
+
+	scanOperation         func(context.Context, string, time.Duration) ([]bleScanDevice, error)
+	connectOperation      func(string) (bleDeviceInfo, error)
+	disconnectOperation   func() error
+	writeOperation        func(string, string, []byte, *int) error
+	subscribeOperation    func(string, string) error
+	transportACKOperation func(bluetooth.DeviceCharacteristic, byte, byte) error
 
 	enableOnce sync.Once
 	enableErr  error
@@ -60,6 +68,7 @@ type bleConnection struct {
 	charCache   map[string]bluetooth.DeviceCharacteristic
 	notifyState map[string]bool
 	transport   *bleTransportState
+	disconnect  func() error
 }
 
 type bleEvent struct {
@@ -188,6 +197,9 @@ func (m *bleManager) handleConnectEvent(device bluetooth.Device, connected bool)
 		shouldBroadcast = true
 	}
 	m.mu.Unlock()
+	if !connected && shouldBroadcast {
+		current.closeTransport()
+	}
 
 	if connected {
 		event.Type = "connected"
@@ -207,17 +219,21 @@ func (m *bleManager) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	timeout := defaultBLEScanTimeout
 	if raw := strings.TrimSpace(r.URL.Query().Get("timeout_ms")); raw != "" {
-		var requested int
-		if _, err := fmt.Sscanf(raw, "%d", &requested); err == nil && requested > 0 {
+		requested, err := strconv.Atoi(raw)
+		if err != nil || requested <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "timeout_ms must be a positive integer")
+			return
+		}
+		maxTimeoutMillis := int(maxBLEScanTimeout / time.Millisecond)
+		if requested > maxTimeoutMillis {
+			timeout = maxBLEScanTimeout
+		} else {
 			timeout = time.Duration(requested) * time.Millisecond
 		}
 	}
-	if timeout > maxBLEScanTimeout {
-		timeout = maxBLEScanTimeout
-	}
 
 	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
-	devices, err := m.scan(r.Context(), prefix, timeout)
+	devices, err := m.executeScan(r.Context(), prefix, timeout)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -238,7 +254,12 @@ func (m *bleManager) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := m.connect(strings.TrimSpace(req.Address))
+	address := strings.TrimSpace(req.Address)
+	if address == "" {
+		writeJSONError(w, http.StatusBadRequest, "address must not be empty")
+		return
+	}
+	device, err := m.executeConnect(address)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -253,7 +274,7 @@ func (m *bleManager) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := m.disconnect(); err != nil {
+	if err := m.executeDisconnect(); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -290,7 +311,7 @@ func (m *bleManager) handleWrite(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[ble] write request service=%s char=%s len=%d transportChannel=%v", req.ServiceUUID, req.CharacteristicUUID, len(payload), req.TransportChannel)
 
-	if err := m.writeCharacteristic(req.ServiceUUID, req.CharacteristicUUID, payload, req.TransportChannel); err != nil {
+	if err := m.executeWrite(req.ServiceUUID, req.CharacteristicUUID, payload, req.TransportChannel); err != nil {
 		log.Printf("[ble] write failed service=%s char=%s len=%d err=%v", req.ServiceUUID, req.CharacteristicUUID, len(payload), err)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -312,7 +333,7 @@ func (m *bleManager) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := m.enableNotifications(req.ServiceUUID, req.CharacteristicUUID); err != nil {
+	if err := m.executeSubscribe(req.ServiceUUID, req.CharacteristicUUID); err != nil {
 		log.Printf("[ble] subscribe failed service=%s char=%s err=%v", req.ServiceUUID, req.CharacteristicUUID, err)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -320,6 +341,41 @@ func (m *bleManager) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[ble] subscribe ok service=%s char=%s", req.ServiceUUID, req.CharacteristicUUID)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (m *bleManager) executeScan(ctx context.Context, prefix string, timeout time.Duration) ([]bleScanDevice, error) {
+	if m.scanOperation != nil {
+		return m.scanOperation(ctx, prefix, timeout)
+	}
+	return m.scan(ctx, prefix, timeout)
+}
+
+func (m *bleManager) executeConnect(address string) (bleDeviceInfo, error) {
+	if m.connectOperation != nil {
+		return m.connectOperation(address)
+	}
+	return m.connect(address)
+}
+
+func (m *bleManager) executeDisconnect() error {
+	if m.disconnectOperation != nil {
+		return m.disconnectOperation()
+	}
+	return m.disconnect()
+}
+
+func (m *bleManager) executeWrite(serviceUUID, characteristicUUID string, payload []byte, transportChannel *int) error {
+	if m.writeOperation != nil {
+		return m.writeOperation(serviceUUID, characteristicUUID, payload, transportChannel)
+	}
+	return m.writeCharacteristic(serviceUUID, characteristicUUID, payload, transportChannel)
+}
+
+func (m *bleManager) executeSubscribe(serviceUUID, characteristicUUID string) error {
+	if m.subscribeOperation != nil {
+		return m.subscribeOperation(serviceUUID, characteristicUUID)
+	}
+	return m.enableNotifications(serviceUUID, characteristicUUID)
 }
 
 func (m *bleManager) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -638,6 +694,7 @@ func (m *bleManager) connect(address string) (bleDeviceInfo, error) {
 		address:     info.Address,
 		name:        info.Name,
 		device:      device,
+		disconnect:  device.Disconnect,
 		connectedAt: time.Now(),
 		charCache:   make(map[string]bluetooth.DeviceCharacteristic),
 		notifyState: make(map[string]bool),
@@ -665,7 +722,8 @@ func (m *bleManager) disconnect() error {
 	m.connection = nil
 	m.mu.Unlock()
 
-	_ = conn.device.Disconnect()
+	conn.closeTransport()
+	_ = conn.disconnectDevice()
 	m.broadcast(bleEvent{
 		Type:      "disconnected",
 		Timestamp: time.Now().Format(time.RFC3339Nano),
@@ -698,9 +756,26 @@ func (m *bleManager) invalidateConnection(conn *bleConnection, cause error) {
 		Name:      conn.name,
 		Error:     cause.Error(),
 	})
-	if err := conn.device.Disconnect(); err != nil {
+	conn.closeTransport()
+	if err := conn.disconnectDevice(); err != nil {
 		log.Printf("[ble] stale GATT disconnect failed address=%s err=%v", conn.address, err)
 	}
+}
+
+func (c *bleConnection) closeTransport() {
+	if c != nil && c.transport != nil {
+		c.transport.close()
+	}
+}
+
+func (c *bleConnection) disconnectDevice() error {
+	if c == nil {
+		return nil
+	}
+	if c.disconnect != nil {
+		return c.disconnect()
+	}
+	return c.device.Disconnect()
 }
 
 func (m *bleManager) state() bleStateResponse {

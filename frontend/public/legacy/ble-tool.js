@@ -13,7 +13,20 @@
         let bleEventSource = null;
         let bleScanLoopActive = false;
         let bleScanLoopRunId = 0;
+        let bleConnectionActionActive = false;
+        let lastBleDevice = null;
         const BLE_NAME_FILTER_STORAGE_KEY = 'ble_web_tool.name_filter';
+        const BLE_WORKBENCH_STATE_EVENT = 'ble-workbench-state';
+
+        function publishBleConnectionEvent(type, detail = {}) {
+            window.dispatchEvent(new CustomEvent(BLE_WORKBENCH_STATE_EVENT, {
+                detail: { type, ...detail }
+            }));
+        }
+
+        function bleErrorMessage(error) {
+            return error && error.message ? error.message : String(error || '未知错误');
+        }
 
         function loadSavedNameFilter() {
             const input = document.getElementById('nameFilter');
@@ -74,16 +87,18 @@
             const disconnectButton = document.getElementById('disconnect');
             const summary = document.getElementById('deviceSummary');
 
-            nameFilter.hidden = connected;
-            scanButton.hidden = connected;
-            deviceSelect.hidden = connected;
-            connectButton.hidden = connected;
-            disconnectButton.hidden = !connected;
-
-            scanButton.disabled = connected;
-            deviceSelect.disabled = connected || bleScanResults.length === 0;
-            connectButton.disabled = connected || bleScanResults.length === 0;
-            disconnectButton.disabled = !connected;
+            const vueManaged = scanButton && scanButton.dataset.vueAction;
+            if (!vueManaged) {
+                nameFilter.hidden = connected;
+                scanButton.hidden = connected;
+                deviceSelect.hidden = connected;
+                connectButton.hidden = connected;
+                disconnectButton.hidden = !connected;
+                scanButton.disabled = connected;
+                deviceSelect.disabled = connected || bleScanResults.length === 0;
+                connectButton.disabled = connected || bleScanResults.length === 0;
+                disconnectButton.disabled = !connected;
+            }
             summary.hidden = connected;
 
             if (connected) {
@@ -107,17 +122,16 @@
                     connected: true
                 }
             };
+            lastBleDevice = {
+                address: peripheral.device.address,
+                name: peripheral.device.name
+            };
 
-            setConnectionStatus(`已连接 · ${formatConnectedDeviceLabel(peripheral.device)}`, 'green');
+            publishBleConnectionEvent('sync_connected', { device: lastBleDevice });
             setBleConnectionControls(true);
-            try {
-                await startDefaultBleNotifications();
-                document.querySelectorAll('.cmd').forEach(btn => btn.disabled = false);
-            } catch (error) {
-                console.error('[ERROR] Failed to restore BLE notifications:', error);
-                setConnectionStatus('已连接，但通知恢复失败，请重新连接', 'red');
-                document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
-            }
+            const subscriptions = await startDefaultBleNotifications();
+            applyBleCommandAvailability(subscriptions);
+            publishBleConnectionEvent('subscriptions_resolved', { subscriptions });
         }
 
         function resetBleConnectionState() {
@@ -127,9 +141,11 @@
             setConnectionStatus('待连接', '#6b7280');
             setBleConnectionControls(false);
             document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
+            publishBleConnectionEvent('sync_idle');
         }
 
         async function syncBleStateFromBackend() {
+            publishBleConnectionEvent('sync_started');
             try {
                 const state = await bleApiRequest(`${bleApiBase}/state`);
                 if (state && state.connected && state.device) {
@@ -141,6 +157,9 @@
                 return state;
             } catch (error) {
                 console.warn('[WARN] 同步蓝牙连接状态失败:', error);
+                publishBleConnectionEvent('backend_unavailable', {
+                    error: bleErrorMessage(error)
+                });
                 return null;
             }
         }
@@ -239,8 +258,10 @@
         function setScanUiState(scanning) {
             const scanButton = document.getElementById('scanDevices');
             bleScanLoopActive = scanning;
-            scanButton.disabled = false;
-            scanButton.innerText = scanning ? '停止扫描' : '扫描设备';
+            if (!scanButton.dataset.vueAction) {
+                scanButton.disabled = false;
+                scanButton.innerText = scanning ? '停止扫描' : '扫描设备';
+            }
         }
 
         function mergeBleScanResults(devices) {
@@ -262,6 +283,7 @@
             bleScanLoopActive = false;
             bleScanLoopRunId += 1;
             setScanUiState(false);
+            publishBleConnectionEvent('scan_stopped', { count: bleScanResults.length });
         }
 
         async function scanBleDevices() {
@@ -284,8 +306,10 @@
             renderBleDeviceOptions();
             setScanUiState(true);
             setConnectionStatus('扫描中，列表会实时刷新...', '#2563eb');
+            publishBleConnectionEvent('scan_started');
 
             const runId = ++bleScanLoopRunId;
+            let scanFailed = false;
             while (bleScanLoopActive && runId === bleScanLoopRunId) {
                 try {
                     const query = new URLSearchParams({
@@ -298,6 +322,7 @@
                     }
                     mergeBleScanResults(response && response.devices);
                     renderBleDeviceOptions();
+                    publishBleConnectionEvent('scan_updated', { count: bleScanResults.length });
                     if (bleScanResults.length > 0) {
                         setConnectionStatus(`扫描中: 已发现 ${bleScanResults.length} 台设备`, '#2563eb');
                     }
@@ -313,6 +338,10 @@
                     }
                     console.error('[ERROR] 蓝牙扫描失败:', error);
                     setConnectionStatus(`扫描失败: ${error.message || error}`, 'red');
+                    scanFailed = true;
+                    publishBleConnectionEvent('scan_failed', {
+                        error: bleErrorMessage(error)
+                    });
                     break;
                 }
             }
@@ -322,6 +351,10 @@
                 if (isDeviceConnected()) {
                     return;
                 }
+                if (scanFailed) {
+                    return;
+                }
+                publishBleConnectionEvent('scan_stopped', { count: bleScanResults.length });
                 if (bleScanResults.length > 0) {
                     setConnectionStatus(`扫描完成: ${bleScanResults.length} 台设备`, '#2563eb');
                 } else if (!document.getElementById('status').innerText.startsWith('扫描失败')) {
@@ -333,7 +366,11 @@
         function ensureBleEventSource() {
             if (bleEventSource) return;
 
+            publishBleConnectionEvent('event_stream_connecting');
             bleEventSource = new EventSource(`${bleApiBase}/events`);
+            bleEventSource.onopen = () => {
+                publishBleConnectionEvent('event_stream_open');
+            };
             bleEventSource.addEventListener('notification', event => {
                 try {
                     peripheral.dispatchNotification(JSON.parse(event.data));
@@ -357,6 +394,7 @@
             });
             bleEventSource.onerror = error => {
                 console.warn('[WARN] BLE 事件流异常，浏览器会自动重连。', error);
+                publishBleConnectionEvent('event_stream_reconnecting');
             };
         }
 
@@ -373,6 +411,10 @@
             async request() {
                 const selected = getSelectedBleDevice();
                 if (!selected) throw new Error('请先扫描并选择设备');
+                lastBleDevice = {
+                    address: selected.address,
+                    name: selected.name || selected.address
+                };
                 this.device = {
                     address: selected.address,
                     name: selected.name || selected.address,
@@ -399,20 +441,54 @@
                     }
                 };
                 this.transportReady = false;
+                lastBleDevice = {
+                    address: this.device.address,
+                    name: this.device.name
+                };
                 console.log('[INFO]CONNECTED');
-                setConnectionStatus(`已连接 · ${formatConnectedDeviceLabel(this.device)}`, 'green');
                 setBleConnectionControls(true);
-                document.querySelectorAll('.cmd').forEach(btn => btn.disabled = false);
+                document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
                 document.querySelectorAll('.rsp').forEach(lbl => lbl.innerText = '');
+                publishBleConnectionEvent('subscribing', { device: lastBleDevice });
             }
 
-            disconnect() {
-                fetch(`${bleApiBase}/disconnect`, { method: 'POST' })
-                    .catch(error => console.warn('[WARN] 断开设备请求失败:', error))
-                    .finally(() => this.onDisconnected());
+            async disconnect() {
+                publishBleConnectionEvent('disconnect_started');
+                try {
+                    await bleApiRequest(`${bleApiBase}/disconnect`, { method: 'POST' });
+                    this.onDisconnected({
+                        address: this.device && this.device.address,
+                        name: this.device && this.device.name,
+                        error: ''
+                    }, 'sync_idle');
+                } catch (error) {
+                    console.warn('[WARN] 断开设备请求失败:', error);
+                    let state = null;
+                    try {
+                        state = await bleApiRequest(`${bleApiBase}/state`);
+                    } catch (stateError) {
+                        console.warn('[WARN] 断开失败后状态对账失败:', stateError);
+                    }
+                    if (state && state.connected && state.device) {
+                        publishBleConnectionEvent('disconnect_failed', {
+                            error: bleErrorMessage(error),
+                            connected: true
+                        });
+                        return;
+                    }
+                    this.onDisconnected({
+                        address: this.device && this.device.address,
+                        name: this.device && this.device.name,
+                        error: bleErrorMessage(error)
+                    }, 'disconnect_failed');
+                }
             }
 
-            onDisconnected() {
+            onDisconnected(payload = null, outcome = 'disconnected') {
+                const disconnectedDevice = this.device ? {
+                    address: this.device.address,
+                    name: this.device.name
+                } : lastBleDevice;
                 console.log('[WARN]DISCONNECTED');
                 flushPendingAppResponse();
                 pendingCommands.forEach(commandInfo => {
@@ -429,15 +505,29 @@
                 this.transportReady = false;
                 appJsonFragmentBuffers.clear();
                 this.device = null;
+                if (outcome === 'sync_idle') {
+                    publishBleConnectionEvent('sync_idle');
+                } else if (outcome === 'disconnect_failed') {
+                    publishBleConnectionEvent('disconnect_failed', {
+                        error: payload && payload.error ? payload.error : '断开请求失败',
+                        connected: false
+                    });
+                } else {
+                    publishBleConnectionEvent('disconnected', {
+                        device: disconnectedDevice,
+                        error: payload && payload.error ? payload.error : undefined
+                    });
+                }
             }
 
             handleBackendDisconnect(payload) {
                 if (!this.device) {
-                    this.onDisconnected();
                     return;
                 }
-                if (!payload || !payload.address || payload.address === this.device.address) {
-                    this.onDisconnected();
+                const currentAddress = String(this.device.address || '').toUpperCase();
+                const eventAddress = String(payload && payload.address || '').toUpperCase();
+                if (!eventAddress || eventAddress === currentAddress) {
+                    this.onDisconnected(payload);
                 }
             }
 
@@ -698,11 +788,36 @@
         async function tryStartDefaultBleNotifications(label, svc, ch, listener) {
             try {
                 await peripheral.startCmdNotifications(svc, ch, listener);
-                return true;
+                return { status: 'ready' };
             } catch (error) {
                 console.warn(`[WARN] ${label} 通知订阅失败，连接保持可用:`, error);
-                return false;
+                return {
+                    status: 'failed',
+                    error: bleErrorMessage(error)
+                };
             }
+        }
+
+        function applyBleCommandAvailability(subscriptions) {
+            document.querySelectorAll('.cmd').forEach(control => {
+                control.disabled = false;
+                delete control.dataset.bleDisabledReason;
+            });
+            document.querySelectorAll('[data-ble-requires]').forEach(owner => {
+                const required = String(owner.dataset.bleRequires || '')
+                    .split(/\s+/)
+                    .filter(Boolean);
+                const unavailable = required.filter(name => !subscriptions[name] || subscriptions[name].status !== 'ready');
+                if (unavailable.length === 0) return;
+                const controls = owner.classList.contains('cmd')
+                    ? [owner]
+                    : Array.from(owner.querySelectorAll('.cmd'));
+                const reason = `BLE 通道不可用: ${unavailable.join(', ')}`;
+                controls.forEach(control => {
+                    control.disabled = true;
+                    control.dataset.bleDisabledReason = reason;
+                });
+            });
         }
 
         async function startDefaultBleNotifications() {
@@ -710,9 +825,16 @@
             peripheral.notificationSubscriptions.clear();
             peripheral.transportReady = false;
             appJsonFragmentBuffers.clear();
+            const subscriptions = {
+                transport: { status: 'pending' },
+                nus: { status: 'pending' },
+                app: { status: 'pending' },
+                dfu: { status: 'pending' }
+            };
 
             try {
                 await ensureBleTransportNotifications();
+                subscriptions.transport = { status: 'ready' };
                 console.info('[BLE] transport ccc subscribed');
                 const appLbl = document.getElementById('appCmdRspLog');
                 if (appLbl) {
@@ -721,6 +843,10 @@
                 }
             } catch (error) {
                 peripheral.transportReady = false;
+                subscriptions.transport = {
+                    status: 'unsupported',
+                    error: bleErrorMessage(error)
+                };
                 console.warn('[WARN] 设备未开放 BLE TRANSPORT 特征，已按老固件小包模式继续:', error);
                 const appLbl = document.getElementById('appCmdRspLog');
                 if (appLbl) {
@@ -729,7 +855,7 @@
                 }
             }
 
-            await tryStartDefaultBleNotifications('NUS', uuidSvcNus, uuidCharNotify, event => {
+            subscriptions.nus = await tryStartDefaultBleNotifications('NUS', uuidSvcNus, uuidCharNotify, event => {
                 const text = new TextDecoder().decode(event.target.value);
                 const lbl = document.getElementById('customCmdRsp');
                 if (lbl) {
@@ -751,7 +877,7 @@
                 }
             });
 
-            await tryStartDefaultBleNotifications('APP', uuidSvcSatellai, uuidCharApp, event => {
+            subscriptions.app = await tryStartDefaultBleNotifications('APP', uuidSvcSatellai, uuidCharApp, event => {
                 const text = new TextDecoder().decode(event.target.value);
                 const channel = event.target.transportChannel;
                 const source = channel === undefined || channel === null ? 'APP' : `TP[CH=${channel}]`;
@@ -784,7 +910,7 @@
                 }
             });
 
-            await tryStartDefaultBleNotifications('DFU', uuidSvcSatellai, uuidCharDfu, event => {
+            subscriptions.dfu = await tryStartDefaultBleNotifications('DFU', uuidSvcSatellai, uuidCharDfu, event => {
                 if (resolveDfu) {
                     resolveDfu(event.target.value);
                     resolveDfu = null;
@@ -792,6 +918,7 @@
                     console.warn(event.target.value);
                 }
             });
+            return subscriptions;
         }
 
         const scanDevicesButton = document.getElementById('scanDevices');
@@ -801,14 +928,43 @@
             });
         }
 
-        async function connectSelectedDevice() {
+        async function runBleConnection(reconnecting) {
+            if (bleConnectionActionActive) return;
+            const target = reconnecting ? lastBleDevice : getSelectedBleDevice();
+            if (!target || !target.address) {
+                publishBleConnectionEvent('connect_failed', {
+                    error: '请先扫描并选择设备',
+                    device: lastBleDevice || undefined
+                });
+                return;
+            }
+
+            bleConnectionActionActive = true;
+            lastBleDevice = {
+                address: target.address,
+                name: target.name || target.address
+            };
             try {
                 if (bleScanLoopActive) {
                     await stopBleScanLoop();
                 }
-                await peripheral.request();
+                publishBleConnectionEvent(
+                    reconnecting ? 'reconnect_started' : 'connect_started',
+                    { device: lastBleDevice }
+                );
+                if (reconnecting) {
+                    peripheral.device = {
+                        address: lastBleDevice.address,
+                        name: lastBleDevice.name,
+                        gatt: { connected: false }
+                    };
+                } else {
+                    await peripheral.request();
+                }
                 await peripheral.connect();
-                await startDefaultBleNotifications();
+                const subscriptions = await startDefaultBleNotifications();
+                applyBleCommandAvailability(subscriptions);
+                publishBleConnectionEvent('subscriptions_resolved', { subscriptions });
             } catch (error) {
                 console.error('[ERROR] 设备连接或订阅失败:', error);
                 
@@ -828,7 +984,21 @@
                 setConnectionStatus('连接失败，请重试', 'red');
                 setBleConnectionControls(false);
                 document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
+                publishBleConnectionEvent('connect_failed', {
+                    error: bleErrorMessage(error),
+                    device: lastBleDevice
+                });
+            } finally {
+                bleConnectionActionActive = false;
             }
+        }
+
+        async function connectSelectedDevice() {
+            await runBleConnection(false);
+        }
+
+        async function reconnectLastBleDevice() {
+            await runBleConnection(true);
         }
 
         const scanAndConnectButton = document.getElementById('scanAndConnect');
@@ -908,7 +1078,9 @@
             }
         });
 
-        function disconnectBleDevice() {
+        async function disconnectBleDevice() {
+            if (bleConnectionActionActive) return;
+            bleConnectionActionActive = true;
             // 清理所有待处理的命令
             pendingCommands.forEach((commandInfo, commandId) => {
                 if (commandInfo.reject) {
@@ -918,7 +1090,11 @@
             pendingCommands.clear();
             
             //忽略取消订阅
-            peripheral.disconnect();
+            try {
+                await peripheral.disconnect();
+            } finally {
+                bleConnectionActionActive = false;
+            }
         }
 
         const disconnectButton = document.getElementById('disconnect');
@@ -3536,6 +3712,7 @@
         Object.assign(window, {
             scanBleDevices,
             connectSelectedDevice,
+            reconnectLastBleDevice,
             disconnectBleDevice,
             chooseFile,
             sendCert,

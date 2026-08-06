@@ -82,7 +82,7 @@ const activeQuickCommandGroup = computed(
         </div>
 
         <div class="form-list">
-          <label class="form-field">
+          <label class="form-field" data-ble-requires="nus">
             <span>NUS 命令</span>
             <input
               id="customCmd"
@@ -92,11 +92,11 @@ const activeQuickCommandGroup = computed(
               disabled
             />
           </label>
-          <label class="switch-line">
+          <label class="switch-line" data-ble-requires="nus">
             <input id="clearOnSent" type="checkbox" checked class="cmd" disabled />
             <span>自动添加 \r\n</span>
           </label>
-          <label class="form-field">
+          <label class="form-field" data-ble-requires="app">
             <span>APP 命令</span>
             <input
               id="appCmd"
@@ -118,7 +118,7 @@ const activeQuickCommandGroup = computed(
       </article>
     </div>
 
-    <article class="admin-card">
+    <article class="admin-card" data-ble-requires="app">
       <div class="card-heading">
         <div>
           <h3>APP 快捷命令</h3>

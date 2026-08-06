@@ -9,6 +9,11 @@ import BleMaintenancePanel from "./components/BleMaintenancePanel.vue";
 import BleModuleTabs from "./components/BleModuleTabs.vue";
 import BlePositionPanel from "./components/BlePositionPanel.vue";
 import BleWifiPanel from "./components/BleWifiPanel.vue";
+import {
+  createBleConnectionState,
+  reduceBleConnectionState,
+  type BleConnectionEvent
+} from "./connectionState";
 import type { LegacyBridge, LegacyWindow, ModuleId, ModuleTab } from "./types";
 
 defineOptions({
@@ -50,6 +55,8 @@ const moduleTabs = [
 
 const activeModuleId = ref<ModuleId>("maintenanceSection");
 const focusedLogId = ref<string | null>(null);
+const bleConnectionState = ref(createBleConnectionState());
+const bleConnectionEventName = "ble-workbench-state";
 
 const activeModule = computed(
   () => moduleTabs.find(item => item.id === activeModuleId.value) ?? moduleTabs[0]
@@ -241,12 +248,23 @@ function loadLegacyScript(): void {
   });
 }
 
+function handleBleConnectionEvent(event: Event): void {
+  const detail = (event as CustomEvent<BleConnectionEvent>).detail;
+  if (!detail?.type) return;
+  bleConnectionState.value = reduceBleConnectionState(
+    bleConnectionState.value,
+    detail
+  );
+}
+
 onMounted(() => {
-  loadLegacyScript();
+  window.addEventListener(bleConnectionEventName, handleBleConnectionEvent);
   window.addEventListener("keydown", handleWorkbenchKeydown);
+  loadLegacyScript();
 });
 
 onUnmounted(() => {
+  window.removeEventListener(bleConnectionEventName, handleBleConnectionEvent);
   window.removeEventListener("keydown", handleWorkbenchKeydown);
 });
 </script>
@@ -272,7 +290,7 @@ onUnmounted(() => {
 
     <div class="ble-tool-admin">
       <main class="admin-main">
-        <BleConnectionPanel :bridge="bridge" />
+        <BleConnectionPanel :bridge="bridge" :state="bleConnectionState" />
         <BleModuleTabs
           :active-module="activeModule"
           :active-module-id="activeModuleId"
