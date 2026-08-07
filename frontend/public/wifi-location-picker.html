@@ -102,11 +102,10 @@
             display: none;
         }
     </style>
-    <script src="https://webapi.amap.com/maps?v=2.0&key=7d85ff33aabb204519ebeac3dd8d9035&plugin=AMap.Marker"></script>
 </head>
 <body>
     <div class="modal">
-        <div id="error" class="error"></div>
+        <div id="error" class="error" role="alert" aria-live="assertive"></div>
         <div class="toolbar">
             <div>
                 <div class="title">选择 Wi-Fi 信标位置</div>
@@ -122,16 +121,33 @@
     </div>
 
     <script>
+        const amapSdkUrl = 'https://webapi.amap.com/maps?v=2.0&key=7d85ff33aabb204519ebeac3dd8d9035&plugin=AMap.Marker';
+        const defaultLocation = { lat: 22.539307, lng: 113.952685 };
         let map;
         let marker;
         let selected;
         let mapReady = false;
-        const defaultLocation = { lat: 22.539307, lng: 113.952685 };
+        let amapSdkPromise;
+        let mapInitialization;
+        let latestOpenRequest = {};
+        let openRequestId = 0;
+
+        function notifyParent(type, payload = {}) {
+            if (!window.parent || window.parent === window) return;
+            window.parent.postMessage({ type, ...payload }, window.location.origin);
+        }
 
         function showError(message) {
             const el = document.getElementById('error');
             el.textContent = message;
             el.style.display = 'block';
+            notifyParent('wifi-location-picker-error', { message });
+        }
+
+        function clearError() {
+            const el = document.getElementById('error');
+            el.textContent = '';
+            el.style.display = 'none';
         }
 
         function format(value) {
@@ -179,55 +195,163 @@
             window.parent.postMessage({ type: 'wifi-location-selected', ...selected }, '*');
         }
 
-        function initMap() {
-            if (!window.AMap) {
-                showError('地图加载失败，请检查网络或高德地图 API。');
-                document.getElementById('map').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#b91c1c;font-weight:600;">地图加载失败，请确认通过本地服务访问并检查网络。</div>';
-                return;
+        function loadAmapSdk() {
+            if (window.AMap && typeof window.AMap.Map === 'function') {
+                return Promise.resolve(window.AMap);
             }
+            if (amapSdkPromise) return amapSdkPromise;
 
-            const params = new URLSearchParams(window.location.search);
-            const lat = Number(params.get('lat'));
-            const lng = Number(params.get('lng'));
-            const hasInitial = Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
-            const center = hasInitial ? [lng, lat] : [defaultLocation.lng, defaultLocation.lat];
+            amapSdkPromise = new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                let settled = false;
+                const timeout = window.setTimeout(() => {
+                    finish(reject, new Error('高德地图 SDK 加载超时'));
+                }, 10000);
+                const finish = (callback, value) => {
+                    if (settled) return;
+                    settled = true;
+                    window.clearTimeout(timeout);
+                    callback(value);
+                };
 
-            try {
-                map = new AMap.Map('map', {
-                    zoom: hasInitial ? 15 : 11,
-                    center,
+                script.src = amapSdkUrl;
+                script.async = true;
+                script.dataset.amapSdk = 'true';
+                script.addEventListener('load', () => {
+                    if (window.AMap && typeof window.AMap.Map === 'function') {
+                        finish(resolve, window.AMap);
+                    } else {
+                        finish(reject, new Error('高德地图 SDK 已加载但 AMap.Map 不可用'));
+                    }
+                }, { once: true });
+                script.addEventListener('error', () => {
+                    finish(reject, new Error('高德地图 SDK 网络加载失败'));
+                }, { once: true });
+                document.head.appendChild(script);
+            }).catch(error => {
+                amapSdkPromise = undefined;
+                throw error;
+            });
+            return amapSdkPromise;
+        }
+
+        function waitForMapContainer(timeoutMs = 3000) {
+            const startedAt = performance.now();
+            return new Promise((resolve, reject) => {
+                const check = () => {
+                    const rect = document.getElementById('map').getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {
+                        resolve(rect);
+                        return;
+                    }
+                    if (performance.now() - startedAt >= timeoutMs) {
+                        reject(new Error('地图容器不可见或尺寸为 0'));
+                        return;
+                    }
+                    requestAnimationFrame(check);
+                };
+                check();
+            });
+        }
+
+        function resolveLocation(request = {}) {
+            const hasLat = request.lat !== undefined && request.lat !== null && String(request.lat).trim() !== '';
+            const hasLng = request.lng !== undefined && request.lng !== null && String(request.lng).trim() !== '';
+            const lat = Number(request.lat);
+            const lng = Number(request.lng);
+            const hasInitial = hasLat && hasLng
+                && Number.isFinite(lat) && Number.isFinite(lng)
+                && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+            return hasInitial
+                ? { lat, lng, zoom: 15 }
+                : { ...defaultLocation, zoom: 11 };
+        }
+
+        function resizeMap() {
+            if (!map || typeof map.resize !== 'function') return;
+            map.resize();
+        }
+
+        async function ensureMap(request) {
+            if (map) return map;
+            if (mapInitialization) return mapInitialization;
+
+            mapInitialization = (async () => {
+                await waitForMapContainer();
+                const amap = await loadAmapSdk();
+                await waitForMapContainer();
+                const location = resolveLocation(request);
+                map = new amap.Map('map', {
+                    zoom: location.zoom,
+                    center: [location.lng, location.lat],
                     resizeEnable: true
                 });
+                map.on('click', event => {
+                    updateSelected(event.lnglat.lng, event.lnglat.lat);
+                });
                 mapReady = true;
-            } catch (error) {
-                showError(`地图初始化失败：${error.message || error}`);
-                return;
-            }
-
-            map.on('click', (event) => {
-                updateSelected(event.lnglat.lng, event.lnglat.lat);
+                return map;
+            })().catch(error => {
+                mapInitialization = undefined;
+                throw error;
             });
+            return mapInitialization;
+        }
 
-            if (hasInitial) {
-                updateSelected(lng, lat);
-            } else {
-                updateSelected(defaultLocation.lng, defaultLocation.lat);
+        async function openPicker(request = {}) {
+            latestOpenRequest = request;
+            const requestId = ++openRequestId;
+            clearError();
+            try {
+                await ensureMap(request);
+                if (requestId !== openRequestId) return;
+                const location = resolveLocation(latestOpenRequest);
+                updateSelected(location.lng, location.lat);
+                requestAnimationFrame(resizeMap);
+            } catch (error) {
+                showError(`地图初始化失败：${error.message || error}。请检查网络，并关闭 JShelter 等可能干扰 WebGL/canvas 的扩展后重试。`);
             }
-            setTimeout(() => {
-                if (map && typeof map.resize === 'function') map.resize();
-            }, 120);
+        }
+
+        function mapRuntimeErrorText(event) {
+            return [event.message, event.filename, event.error?.stack]
+                .filter(Boolean)
+                .join(' ');
+        }
+
+        function handleMapRuntimeError(event) {
+            const details = mapRuntimeErrorText(event);
+            const extensionInterference = /JShelter|wrappers_generated|SecurityError.*cross-origin|WebGL/i.test(details);
+            const amapFailure = /webapi\.amap\.com|maps\?|AMap|getStatus|canvas/i.test(details);
+            if (!extensionInterference && !amapFailure) return;
+            const message = extensionInterference
+                ? '检测到浏览器扩展干扰地图渲染。请关闭 JShelter 等扩展，并在 Edge InPrivate 窗口重试。'
+                : '地图渲染失败。请关闭可能干扰 WebGL/canvas 的扩展后重试；若仍失败，请检查高德地图 SDK 网络状态。';
+            showError(message);
+            event.preventDefault();
         }
 
         window.addEventListener('message', (event) => {
-            if (!event.data || event.data.type !== 'wifi-location-picker-resize') return;
-            if (mapReady && map && typeof map.resize === 'function') map.resize();
+            if (event.source !== window.parent || event.origin !== window.location.origin) return;
+            if (event.data?.type === 'wifi-location-picker-open') {
+                openPicker(event.data);
+            }
+        });
+        window.addEventListener('error', handleMapRuntimeError);
+        window.addEventListener('unhandledrejection', event => {
+            const reason = event.reason instanceof Error ? event.reason : new Error(String(event.reason || ''));
+            const syntheticEvent = {
+                message: reason.message,
+                error: reason,
+                preventDefault: () => event.preventDefault()
+            };
+            handleMapRuntimeError(syntheticEvent);
         });
 
         document.getElementById('confirmBtn').addEventListener('click', confirmLocation);
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initMap);
-        } else {
-            initMap();
+        if (window.parent === window) {
+            const params = new URLSearchParams(window.location.search);
+            openPicker({ lat: params.get('lat'), lng: params.get('lng') });
         }
     </script>
 </body>
