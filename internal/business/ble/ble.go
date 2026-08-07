@@ -715,15 +715,19 @@ func (m *bleManager) connect(address string) (bleDeviceInfo, error) {
 func (m *bleManager) disconnect() error {
 	m.mu.Lock()
 	conn := m.connection
+	m.mu.Unlock()
 	if conn == nil {
-		m.mu.Unlock()
 		return nil
 	}
-	m.connection = nil
-	m.mu.Unlock()
+
+	if err := conn.disconnectDevice(); err != nil {
+		return fmt.Errorf("断开设备失败: %w", err)
+	}
+	if !m.clearConnectionIfCurrent(conn) {
+		return nil
+	}
 
 	conn.closeTransport()
-	_ = conn.disconnectDevice()
 	m.broadcast(bleEvent{
 		Type:      "disconnected",
 		Timestamp: time.Now().Format(time.RFC3339Nano),

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -171,6 +172,41 @@ func TestBLEOperationErrorsRemainObservable(t *testing.T) {
 	}
 	if got := decodeErrorResponse(t, recorder); got != "fixture disconnect failure" {
 		t.Fatalf("error = %q", got)
+	}
+}
+
+func TestBLEMissingSubscriptionReturnsBadRequestWithoutDisconnecting(t *testing.T) {
+	connection := &bleConnection{
+		address: "AA:BB:CC:DD:EE:FF",
+		name:    "fixture",
+	}
+	events := make(chan bleEvent, 1)
+	manager := newHTTPTestManager()
+	manager.connection = connection
+	manager.subscribers[events] = struct{}{}
+	manager.subscribeOperation = func(service, characteristic string) error {
+		return fmt.Errorf("未找到服务 %s: bluetooth: did not find all requested services", service)
+	}
+
+	recorder := performBLERequest(
+		manager,
+		http.MethodPost,
+		"/api/ble/subscribe",
+		`{"serviceUuid":"6e400001-b5a3-f393-e0a9-e50e24dcca9e","characteristicUuid":"6e400003-b5a3-f393-e0a9-e50e24dcca9e"}`,
+	)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	if got := decodeErrorResponse(t, recorder); !strings.Contains(got, "未找到服务") {
+		t.Fatalf("error = %q, want missing-service diagnostic", got)
+	}
+	if manager.connection != connection || !manager.state().Connected {
+		t.Fatal("missing optional service must preserve the physical connection")
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("missing optional service broadcast a false disconnect: %#v", event)
+	default:
 	}
 }
 

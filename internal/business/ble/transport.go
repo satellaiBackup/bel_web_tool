@@ -258,11 +258,15 @@ func (m *bleManager) handleTransportNotification(conn *bleConnection, tpChar blu
 	m.broadcastTransportDebug(conn, "frame", channel, msgID, seq, sof, eof, len(data), len(data)-3, 0, 0, "")
 
 	if channel == tpChCtrl {
-		if len(data) >= 12 && data[9] == tpAckType {
-			log.Printf("[ble-tp] rx ack msg=%d status=%d", data[10], data[11])
-			m.broadcastTransportDebug(conn, "ack", channel, msgID, seq, sof, eof, len(data), len(data)-9, 0, 0, fmt.Sprintf("ack_msg=%d status=%d", data[10], data[11]))
-			conn.transport.resolvePending(data[10], data[11])
+		ackedMsgID, status, reason, ok := parseTransportACKFrame(data)
+		if !ok {
+			log.Printf("[ble-tp] rx invalid ack reason=%s len=%d", reason, len(data))
+			m.broadcastTransportDebug(conn, "reject", channel, msgID, seq, sof, eof, len(data), max(len(data)-9, 0), 0, 0, "invalid_ack:"+reason)
+			return true
 		}
+		log.Printf("[ble-tp] rx ack msg=%d status=%d", ackedMsgID, status)
+		m.broadcastTransportDebug(conn, "ack", channel, msgID, seq, sof, eof, len(data), 3, 0, 0, fmt.Sprintf("ack_msg=%d status=%d", ackedMsgID, status))
+		conn.transport.resolvePending(ackedMsgID, status)
 		return true
 	}
 
@@ -612,6 +616,35 @@ func sendTransportACK(char bluetooth.DeviceCharacteristic, msgID, status byte) e
 	}
 	_, err := char.Write(frame)
 	return err
+}
+
+func parseTransportACKFrame(data []byte) (ackedMsgID, status byte, reason string, ok bool) {
+	if len(data) != 12 {
+		return 0, 0, "length", false
+	}
+	if data[0] != tpCtrlSOF|tpCtrlEOF|tpChCtrl {
+		return 0, 0, "control", false
+	}
+	if data[1] != 0 {
+		return 0, 0, "message_id", false
+	}
+	if data[2] != 0 {
+		return 0, 0, "sequence", false
+	}
+	if binary.LittleEndian.Uint32(data[3:7]) != 3 {
+		return 0, 0, "total", false
+	}
+	payload := data[9:12]
+	if binary.LittleEndian.Uint16(data[7:9]) != crc16CCITT(payload) {
+		return 0, 0, "crc", false
+	}
+	if payload[0] != tpAckType {
+		return 0, 0, "type", false
+	}
+	if payload[2] > tpAckTimeout {
+		return 0, 0, "status", false
+	}
+	return payload[1], payload[2], "", true
 }
 
 func crc16CCITT(data []byte) uint16 {

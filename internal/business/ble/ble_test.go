@@ -116,6 +116,85 @@ func TestInvalidateConnectionCleansTransportAndBroadcastsReason(t *testing.T) {
 	}
 }
 
+func TestDisconnectReturnsDeviceErrorAndPreservesObservableConnection(t *testing.T) {
+	disconnectErr := errors.New("fixture disconnect failure")
+	transport := newBLETransportState()
+	pending := transport.registerPending(7)
+	connection := &bleConnection{
+		address:   "AA:BB:CC:DD:EE:FF",
+		name:      "fixture",
+		transport: transport,
+		disconnect: func() error {
+			return disconnectErr
+		},
+	}
+	events := make(chan bleEvent, 1)
+	manager := &bleManager{
+		connection:  connection,
+		subscribers: map[chan bleEvent]struct{}{events: {}},
+	}
+
+	err := manager.disconnect()
+	if !errors.Is(err, disconnectErr) {
+		t.Fatalf("disconnect error = %v, want wrapped fixture error", err)
+	}
+	if manager.connection != connection || !manager.state().Connected {
+		t.Fatal("failed disconnect must preserve the observable active connection")
+	}
+	select {
+	case status := <-pending:
+		t.Fatalf("failed disconnect released transport sender with status %d", status)
+	default:
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("failed disconnect broadcast a false state transition: %#v", event)
+	default:
+	}
+	transport.close()
+}
+
+func TestDisconnectSuccessClearsTransportAndBroadcasts(t *testing.T) {
+	transport := newBLETransportState()
+	pending := transport.registerPending(8)
+	connection := &bleConnection{
+		address:   "AA:BB:CC:DD:EE:FF",
+		name:      "fixture",
+		transport: transport,
+		disconnect: func() error {
+			return nil
+		},
+	}
+	events := make(chan bleEvent, 1)
+	manager := &bleManager{
+		connection:  connection,
+		subscribers: map[chan bleEvent]struct{}{events: {}},
+	}
+
+	if err := manager.disconnect(); err != nil {
+		t.Fatalf("disconnect returned error: %v", err)
+	}
+	if manager.connection != nil || manager.state().Connected {
+		t.Fatal("successful disconnect did not clear the active connection")
+	}
+	select {
+	case status := <-pending:
+		if status != tpAckTimeout {
+			t.Fatalf("pending status = %d, want %d", status, tpAckTimeout)
+		}
+	default:
+		t.Fatal("successful disconnect did not release transport sender")
+	}
+	select {
+	case event := <-events:
+		if event.Type != "disconnected" || event.Address != connection.address {
+			t.Fatalf("unexpected disconnect event: %#v", event)
+		}
+	default:
+		t.Fatal("successful disconnect did not broadcast state transition")
+	}
+}
+
 func TestBLEScanStateDeduplicatesFiltersAndSorts(t *testing.T) {
 	state := &bleScanState{results: make(map[string]bleScanDevice)}
 	state.addResult(bleScanDevice{Address: "BB", Name: "SAT-B", RSSI: -70, SeenCount: 1})

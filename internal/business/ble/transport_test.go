@@ -339,6 +339,48 @@ func TestTransportControlACKResolvesPendingSend(t *testing.T) {
 	}
 }
 
+func TestTransportControlACKRejectsMalformedFrames(t *testing.T) {
+	validFrame := buildTransportFrames(tpChCtrl, 0, []byte{tpAckType, 23, tpAckOK}, 20)[0]
+	tests := []struct {
+		name   string
+		mutate func([]byte) []byte
+	}{
+		{name: "truncated", mutate: func(frame []byte) []byte { return frame[:11] }},
+		{name: "trailing bytes", mutate: func(frame []byte) []byte { return append(frame, 0) }},
+		{name: "missing frame flag", mutate: func(frame []byte) []byte { frame[0] ^= tpCtrlSOF; return frame }},
+		{name: "outer message id", mutate: func(frame []byte) []byte { frame[1] = 1; return frame }},
+		{name: "sequence", mutate: func(frame []byte) []byte { frame[2] = 1; return frame }},
+		{name: "declared length", mutate: func(frame []byte) []byte { frame[3] = 2; return frame }},
+		{name: "CRC", mutate: func(frame []byte) []byte { frame[7] ^= 0xff; return frame }},
+		{name: "type", mutate: func(frame []byte) []byte {
+			frame[9] = 2
+			binary.LittleEndian.PutUint16(frame[7:9], crc16CCITT(frame[9:12]))
+			return frame
+		}},
+		{name: "status", mutate: func(frame []byte) []byte {
+			frame[11] = tpAckTimeout + 1
+			binary.LittleEndian.PutUint16(frame[7:9], crc16CCITT(frame[9:12]))
+			return frame
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager, connection, _, _ := newTransportReceiveFixture()
+			pending := connection.transport.registerPending(23)
+			frame := test.mutate(append([]byte(nil), validFrame...))
+			manager.handleTransportNotification(connection, bluetooth.DeviceCharacteristic{}, frame)
+
+			select {
+			case status := <-pending:
+				t.Fatalf("malformed ACK resolved pending sender with status %d", status)
+			default:
+			}
+			connection.transport.clearPending(23)
+		})
+	}
+}
+
 func TestTransportCloseClearsReceiveTimerAndPendingACKs(t *testing.T) {
 	state := newBLETransportState()
 	state.mu.Lock()
