@@ -3959,7 +3959,8 @@
 
         function editorModalClosed() {
             console.log("编辑器模态框已由iframe内部关闭。");
-             if (document.getElementById('fenceEditorFrame').style.display !== 'none') {
+            const iframe = document.getElementById('fenceEditorFrame');
+            if (iframe && iframe.style.display !== 'none') {
                 closeFenceEditor();
             }
         }

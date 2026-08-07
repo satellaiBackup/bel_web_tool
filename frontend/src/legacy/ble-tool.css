@@ -1272,10 +1272,6 @@
   border: 0;
 }
 
-.fence-editor-frame {
-  z-index: 1000;
-}
-
 .wifi-picker-frame {
   z-index: 1200;
 }

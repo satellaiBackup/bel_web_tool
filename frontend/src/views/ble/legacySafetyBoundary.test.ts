@@ -112,16 +112,9 @@ test("ordinary actions bypass identity-only warnings while destructive actions r
   assert.doesNotMatch(workbench, /genericDevicePolicy[\s\S]{0,160}risk:\s*"risk_unknown"/);
 });
 
-test("P0-FEN-01/02: neither current nor retained legacy markup initializes the fence iframe", () => {
-  const currentIframe =
-    positionPanel.match(/<iframe[\s\S]*?fence-editor-frame"\s*\/>/)?.[0] || "";
-  const retainedIframe =
-    legacyMarkup.match(/<iframe[^>]+id="fenceEditorFrame"[^>]*>/)?.[0] || "";
-  assert.ok(currentIframe);
-  assert.ok(retainedIframe);
-  assert.doesNotMatch(currentIframe, /\ssrc=/);
-  assert.doesNotMatch(retainedIframe, /\ssrc=/);
-  assert.match(currentIframe, /sandbox="allow-scripts"/);
+test("P0-FEN-01/02: policy-blocked fence editor never mounts an opaque iframe", () => {
+  assert.doesNotMatch(positionPanel, /<iframe[\s\S]*?fenceEditorFrame/);
+  assert.doesNotMatch(legacyMarkup, /<iframe[^>]+id="fenceEditorFrame"/);
 
   const displayData = sourceBlock(
     "function displayReceivedData",
@@ -138,6 +131,12 @@ test("P0-FEN-01/02: neither current nor retained legacy markup initializes the f
     /receiveAmapFenceData\(|sendAppCommandViaBle|peripheral\.sendCmd/
   );
   assert.match(positionPanel, /围栏写入已硬冻结/);
+
+  const editorClosed = sourceBlock(
+    "function editorModalClosed",
+    "function closeFenceEditor"
+  );
+  assert.match(editorClosed, /if \(iframe && iframe\.style\.display !== 'none'\)/);
 });
 
 test("P0-LOG-01/02/03: legacy render paths sanitize and bound before display", () => {

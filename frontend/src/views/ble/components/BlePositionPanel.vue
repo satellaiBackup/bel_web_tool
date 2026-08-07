@@ -99,12 +99,6 @@ defineProps<{
 
       <div class="sub-card">
         <h4>围栏编辑器</h4>
-        <iframe
-          id="fenceEditorFrame"
-          title="围栏编辑器（策略冻结）"
-          sandbox="allow-scripts"
-          class="tool-overlay-frame fence-editor-frame"
-        />
         <button
           id="openEditorBtn"
           class="cmd cmd-button"
