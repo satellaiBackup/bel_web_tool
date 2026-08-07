@@ -174,7 +174,7 @@ function snapshot(): GeneratorSettings {
           <el-checkbox
             v-for="item in sentenceTypes"
             :key="item"
-            :label="item"
+            :value="item"
             border
           >
             {{ sentenceLabels[item] }}
