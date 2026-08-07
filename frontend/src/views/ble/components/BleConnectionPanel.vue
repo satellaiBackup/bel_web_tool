@@ -31,7 +31,7 @@ const controls = computed(() => getBleConnectionControls(props.state));
         <div class="admin-brand-mark">BLE</div>
         <div>
           <h1>BLE 调试工作台</h1>
-          <p>SATELLAI 设备 · 固件 <b>v8.1.0+</b></p>
+          <p>连接后按设备实际通道能力启用调试功能</p>
         </div>
       </div>
       <p class="eyebrow">Device Console</p>
@@ -41,7 +41,7 @@ const controls = computed(() => getBleConnectionControls(props.state));
 
     <div class="connection-panel">
       <div class="connection-status">
-        <span class="status-dot" :data-state="state.phase"></span>
+        <span class="status-dot" :data-state="state.phase" />
         <label id="status" role="status" aria-live="polite">
           {{ state.statusText }}
         </label>
@@ -94,11 +94,11 @@ const controls = computed(() => getBleConnectionControls(props.state));
             连接设备
           </button>
           <button
+            v-show="controls.disconnectVisible"
             id="disconnect"
             type="button"
             class="cmd-button danger"
             data-vue-action="true"
-            v-show="controls.disconnectVisible"
             :disabled="controls.disconnectDisabled"
             :aria-busy="state.phase === 'disconnecting'"
             @click="bridge.call('disconnectBleDevice')"
@@ -106,11 +106,11 @@ const controls = computed(() => getBleConnectionControls(props.state));
             断开连接
           </button>
           <button
+            v-show="controls.reconnectVisible"
             id="reconnect"
             type="button"
             class="cmd-button"
             data-vue-action="true"
-            v-show="controls.reconnectVisible"
             :disabled="controls.reconnectDisabled"
             :aria-busy="state.phase === 'reconnecting'"
             @click="bridge.call('reconnectLastBleDevice')"
