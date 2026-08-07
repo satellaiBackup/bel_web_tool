@@ -15,6 +15,7 @@ defineProps<{
     id="positioningSection"
     class="admin-section"
     data-ble-requires="app"
+    data-safety-policy="fence-write"
   >
     <div class="section-heading">
       <p class="eyebrow">Positioning</p>
@@ -28,6 +29,14 @@ defineProps<{
           <h3>围栏管理</h3>
           <p>围栏激活、禁用、添加、删除和调试事件。</p>
         </div>
+      </div>
+
+      <div class="fence-policy-banner" role="alert">
+        <strong>围栏写入已硬冻结</strong>
+        <span>
+          来源校验、消息 schema、iframe sandbox
+          与风险策略未形成可验证契约前，激活、禁用、添加、删除、参数和调试写入均不可执行。
+        </span>
       </div>
 
       <div class="admin-grid two-columns">
@@ -92,13 +101,15 @@ defineProps<{
         <h4>围栏编辑器</h4>
         <iframe
           id="fenceEditorFrame"
-          src="gps.html"
+          title="围栏编辑器（策略冻结）"
+          sandbox="allow-scripts"
           class="tool-overlay-frame fence-editor-frame"
-        ></iframe>
+        />
         <button
           id="openEditorBtn"
           class="cmd cmd-button"
           disabled
+          data-safety-policy="fence-write"
           @click="bridge.call('openFenceEditor')"
         >
           打开围栏编辑器

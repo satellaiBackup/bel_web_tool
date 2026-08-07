@@ -4,7 +4,7 @@
       <div class="admin-brand-mark">BLE</div>
       <div>
         <h1>蓝牙调试助手</h1>
-        <p>SATELLAI 2024 · 要求版本 <b>v8.1.0</b> 以上</p>
+        <p>连接后按设备实际通道能力启用调试功能</p>
       </div>
     </div>
 
@@ -78,7 +78,11 @@
             </div>
           </div>
 
-          <div class="form-list">
+          <div
+            class="form-list"
+            data-ble-requires="dfu"
+            data-safety-risk="destructive"
+          >
             <div class="form-row">
               <label for="fwfile">固件升级</label>
               <input type="file" id="fwfile" class="cmd admin-input file-input" disabled>
@@ -204,8 +208,8 @@
           <button class="cmd cmd-button warning" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sys.reboot\&quot;}')">重启设备</button>
           <button class="cmd cmd-button warning" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sys.poweroff\&quot;}')">船运模式</button>
           <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;?\&quot;}')">Info Dump</button>
-          <button class="cmd cmd-button danger" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sec.format\&quot;}')">格式化 Flash</button>
-          <button class="cmd cmd-button danger" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;settings.format\&quot;}')">重置 Setting</button>
+          <button class="cmd cmd-button danger" data-safety-risk="destructive" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sec.format\&quot;}')">格式化 Flash</button>
+          <button class="cmd cmd-button danger" data-safety-risk="destructive" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;settings.format\&quot;}')">重置 Setting</button>
         </div>
         <div class="log-title">APP 命令响应</div>
         <div id="appCmdRspLog" class="log-panel medium"></div>
@@ -310,7 +314,7 @@
 
           <div class="sub-card">
             <h4>围栏编辑器</h4>
-            <iframe id="fenceEditorFrame" src="gps.html" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; border:none; z-index:1000;"></iframe>
+            <iframe id="fenceEditorFrame" title="围栏编辑器（策略冻结）" sandbox="allow-scripts" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; border:none; z-index:1000;"></iframe>
             <button id="openEditorBtn" class="cmd cmd-button" disabled onclick="openFenceEditor()">打开围栏编辑器</button>
             <div id="dataList" class="data-preview">
               <p>尚未接收到数据。请打开编辑器并提交一个围栏。</p>
@@ -403,7 +407,7 @@
                 <button class="cmd cmd-button secondary" disabled onclick="clearWifiLocation()">清除位置</button>
               </div>
               <div id="wifiLocationHint" class="hint">经纬度为可选项；留空时只提交 SSID 和 MAC。</div>
-              <iframe id="wifiLocationPickerFrame" src="wifi-location-picker.html" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; border:none; z-index:1200;"></iframe>
+              <iframe id="wifiLocationPickerFrame" src="about:blank" title="Wi-Fi 信标地图选点" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; border:none; z-index:1200;"></iframe>
             </div>
           </div>
 

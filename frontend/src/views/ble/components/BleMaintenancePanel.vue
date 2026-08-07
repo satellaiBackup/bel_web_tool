@@ -50,7 +50,11 @@ function updateFileName(inputId: keyof typeof fileNames, event: Event): void {
           </div>
         </div>
 
-        <div class="file-action-list" data-ble-requires="dfu">
+        <div
+          class="file-action-list"
+          data-ble-requires="dfu"
+          data-safety-risk="destructive"
+        >
           <section class="file-action-row">
             <div class="file-action-meta">
               <label for="fwfile">固件升级</label>

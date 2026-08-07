@@ -12,7 +12,20 @@ defineProps<{
   focusedLogId: string | null;
 }>();
 
-const appQuickCommandGroups = [
+interface AppQuickCommand {
+  label: string;
+  command: string;
+  tone?: "secondary" | "warning" | "danger";
+  safetyPolicy?: "fence-write";
+  safetyRisk?: "destructive";
+}
+
+const appQuickCommandGroups: Array<{
+  id: string;
+  label: string;
+  description: string;
+  commands: AppQuickCommand[];
+}> = [
   {
     id: "status",
     label: "常用查询",
@@ -34,7 +47,12 @@ const appQuickCommandGroups = [
     commands: [
       { label: "查询围栏列表", command: '{"c":"fl"}' },
       { label: "查询激活围栏", command: '{"c":"fe"}' },
-      { label: "清空全部围栏", command: '{"c":"fc"}', tone: "danger" }
+      {
+        label: "清空全部围栏",
+        command: '{"c":"fc"}',
+        tone: "danger",
+        safetyPolicy: "fence-write"
+      }
     ]
   },
   {
@@ -45,11 +63,17 @@ const appQuickCommandGroups = [
       { label: "输出设置日志", command: '{"c":"sd"}', tone: "secondary" },
       { label: "重启设备", command: '{"c":"sys.reboot"}', tone: "warning" },
       { label: "船运模式", command: '{"c":"sys.poweroff"}', tone: "warning" },
-      { label: "格式化 Flash", command: '{"c":"sec.format"}', tone: "danger" },
+      {
+        label: "格式化 Flash",
+        command: '{"c":"sec.format"}',
+        tone: "danger",
+        safetyRisk: "destructive"
+      },
       {
         label: "恢复出厂设置",
         command: '{"c":"factory-reset"}',
-        tone: "danger"
+        tone: "danger",
+        safetyRisk: "destructive"
       }
     ]
   }
@@ -161,6 +185,8 @@ const activeQuickCommandGroup = computed(
               class="cmd cmd-button"
               :class="item.tone"
               :title="item.command"
+              :data-safety-policy="item.safetyPolicy"
+              :data-safety-risk="item.safetyRisk"
               disabled
               @click="bridge.sendAppCommand(item.command)"
             >

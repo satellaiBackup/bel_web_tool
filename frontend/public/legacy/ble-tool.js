@@ -15,8 +15,175 @@
         let bleScanLoopRunId = 0;
         let bleConnectionActionActive = false;
         let lastBleDevice = null;
+        let bleChannelCapabilities = {};
         const BLE_NAME_FILTER_STORAGE_KEY = 'ble_web_tool.name_filter';
         const BLE_WORKBENCH_STATE_EVENT = 'ble-workbench-state';
+        const BLE_APP_JSON_EVENT = 'ble-app-json';
+        const LEGACY_LOG_MAX_ENTRIES = 1000;
+        const LEGACY_LOG_MAX_BYTES = 256 * 1024;
+
+        function getSafetyController() {
+            const controller = window.__bleWorkbenchSafety;
+            return controller && typeof controller.decide === 'function'
+                ? controller
+                : null;
+        }
+
+        function legacyDevicePolicy(action, overrides = {}) {
+            return {
+                action,
+                risk: 'write_confirm',
+                ...overrides
+            };
+        }
+
+        const destructiveAppCommands = new Set([
+            'factory-reset',
+            'sec.format',
+            'settings.format',
+            'sys.poweroff'
+        ]);
+
+        function appCommandSafetyOverrides(jsonString) {
+            let command = '';
+            try {
+                const payload = JSON.parse(String(jsonString || ''));
+                command = payload && typeof payload.c === 'string' ? payload.c : '';
+            } catch (error) {
+                command = '';
+            }
+            if (['fc', 'f0', 'f1'].includes(command)) {
+                return {
+                    capability: 'fence_write',
+                    risk: 'risk_unknown',
+                    policy: 'policy_blocked'
+                };
+            }
+            return {
+                capability: 'app',
+                risk: destructiveAppCommands.has(command)
+                    ? 'destructive_confirm'
+                    : 'write_confirm'
+            };
+        }
+
+        function assertLegacyDeviceActionAllowed(action, overrides = {}) {
+            const controller = getSafetyController();
+            if (!controller || typeof controller.assertAllowed !== 'function') {
+                throw new Error('[policy_blocked] 统一安全门禁不可用，禁止设备写入');
+            }
+            controller.assertAllowed(legacyDevicePolicy(action, overrides));
+        }
+
+        function bleChannelForWrite(serviceUuid, characteristicUuid) {
+            const service = normalizeBleUuid(serviceUuid);
+            const characteristic = normalizeBleUuid(characteristicUuid);
+            if (service === normalizeBleUuid(uuidSvcNus) && characteristic === normalizeBleUuid(uuidCharWrite)) {
+                return 'nus';
+            }
+            if (service !== normalizeBleUuid(uuidSvcSatellai)) return '';
+            if (characteristic === normalizeBleUuid(uuidCharApp)) return 'app';
+            if (characteristic === normalizeBleUuid(uuidCharDfu)) return 'dfu';
+            if (characteristic === normalizeBleUuid(uuidCharTransport)) return 'transport';
+            return '';
+        }
+
+        function missingBleChannelReason(channels) {
+            return `当前设备不具备所需的订阅和/或发送能力：缺失通道 ${channels.map(name => name.toUpperCase()).join(', ')}`;
+        }
+
+        function assertBleChannelWriteAvailable(serviceUuid, characteristicUuid) {
+            const channel = bleChannelForWrite(serviceUuid, characteristicUuid);
+            const capability = channel && bleChannelCapabilities[channel];
+            if (capability && capability.status === 'ready') return channel;
+            throw new Error(missingBleChannelReason([channel || 'unknown']));
+        }
+
+        function enforceUnifiedSafetyGate() {
+            const controller = getSafetyController();
+            if (controller && typeof controller.applyDomPolicy === 'function') {
+                controller.applyDomPolicy();
+                return;
+            }
+            document.querySelectorAll('.cmd').forEach(control => {
+                control.disabled = true;
+                control.setAttribute('aria-disabled', 'true');
+                control.dataset.bleDisabledReason = '统一安全门禁不可用';
+            });
+        }
+
+        function sanitizeLegacyLogText(value) {
+            const controller = getSafetyController();
+            if (controller && typeof controller.sanitizeLogText === 'function') {
+                return controller.sanitizeLogText(value);
+            }
+            return String(value ?? '')
+                .replace(/LPA:1\$[^\s$]+\$[^\s]+/gi, '[REDACTED_ACTIVATION_CODE]')
+                .replace(/((?:"|')?(?:ac|activation_?code|password|passwd|pwd|psk|authorization|cookie|token|secret|body)(?:"|')?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;&]+)/gi, '$1[REDACTED]')
+                .replace(/([?&][^=&#\s]+)=([^&#\s]*)/g, '$1=[REDACTED]')
+                .replace(/\b(\d{4})\d{10,14}(\d{4})\b/g, '$1**********$2')
+                .replace(/\b([0-9a-f]{2})[:-]([0-9a-f]{2})(?:[:-][0-9a-f]{2}){2}[:-]([0-9a-f]{2})[:-]([0-9a-f]{2})\b/gi, '$1:$2:**:**:$3:$4');
+        }
+
+        function boundLegacyLogText(value) {
+            const controller = getSafetyController();
+            if (controller && typeof controller.appendBoundedLog === 'function') {
+                return controller.appendBoundedLog('', value).text;
+            }
+            let lines = String(value ?? '').split('\n');
+            let dropped = Math.max(0, lines.length - LEGACY_LOG_MAX_ENTRIES);
+            if (dropped) lines = lines.slice(-LEGACY_LOG_MAX_ENTRIES);
+            while (lines.length > 1 && new TextEncoder().encode(lines.join('\n')).byteLength > LEGACY_LOG_MAX_BYTES) {
+                lines.shift();
+                dropped += 1;
+            }
+            let text = lines.join('\n');
+            if (new TextEncoder().encode(text).byteLength > LEGACY_LOG_MAX_BYTES) {
+                const characters = Array.from(text);
+                while (characters.length > 0 && new TextEncoder().encode(characters.join('')).byteLength > LEGACY_LOG_MAX_BYTES - 64) {
+                    characters.shift();
+                }
+                text = characters.join('');
+                dropped = Math.max(1, dropped);
+            }
+            return dropped ? `[已丢弃 ${dropped} 条较早日志]\n${text}` : text;
+        }
+
+        function boundLegacyLogChildren(log) {
+            if (!log) return;
+            const markerSelector = '[data-log-truncation="true"]';
+            let marker = log.querySelector(markerSelector);
+            let dropped = Number(log.dataset.droppedEntries || 0);
+            const contentChildren = () => Array.from(log.children).filter(child => child !== marker);
+            while (contentChildren().length > LEGACY_LOG_MAX_ENTRIES) {
+                contentChildren()[0].remove();
+                dropped += 1;
+            }
+            while (
+                contentChildren().length > 1 &&
+                new TextEncoder().encode(log.textContent || '').byteLength > LEGACY_LOG_MAX_BYTES
+            ) {
+                contentChildren()[0].remove();
+                dropped += 1;
+            }
+            if (
+                contentChildren().length === 1 &&
+                new TextEncoder().encode(log.textContent || '').byteLength > LEGACY_LOG_MAX_BYTES
+            ) {
+                const onlyChild = contentChildren()[0];
+                onlyChild.textContent = boundLegacyLogText(onlyChild.textContent);
+                dropped = Math.max(1, dropped);
+            }
+            if (dropped <= 0) return;
+            if (!marker) {
+                marker = document.createElement('div');
+                marker.dataset.logTruncation = 'true';
+                marker.className = 'log-truncation-notice';
+                log.prepend(marker);
+            }
+            log.dataset.droppedEntries = String(dropped);
+            marker.textContent = `已达到日志上限，较早记录已丢弃 ${dropped} 条。`;
+        }
 
         function publishBleConnectionEvent(type, detail = {}) {
             window.dispatchEvent(new CustomEvent(BLE_WORKBENCH_STATE_EVENT, {
@@ -136,6 +303,7 @@
 
         function resetBleConnectionState() {
             peripheral.device = null;
+            bleChannelCapabilities = {};
             peripheral.notificationListeners.clear();
             peripheral.notificationSubscriptions.clear();
             setConnectionStatus('待连接', '#6b7280');
@@ -441,6 +609,7 @@
                     }
                 };
                 this.transportReady = false;
+                bleChannelCapabilities = {};
                 lastBleDevice = {
                     address: this.device.address,
                     name: this.device.name
@@ -503,6 +672,7 @@
                 this.notificationListeners.clear();
                 this.notificationSubscriptions.clear();
                 this.transportReady = false;
+                bleChannelCapabilities = {};
                 appJsonFragmentBuffers.clear();
                 this.device = null;
                 if (outcome === 'sync_idle') {
@@ -556,6 +726,11 @@
                 if (!this.device || !this.device.gatt || !this.device.gatt.connected) {
                     throw new Error('设备未连接，无法发送指令');
                 }
+                const channel = assertBleChannelWriteAvailable(svc, ch);
+                assertLegacyDeviceActionAllowed('legacy.raw_write', {
+                    capability: channel,
+                    risk: 'write_confirm'
+                });
                 await bleApiRequest(`${bleApiBase}/write`, {
                     method: 'POST',
                     body: JSON.stringify({
@@ -638,7 +813,7 @@
 
         function appendLog(element, text, direction = '>') {
             if (!element || text === undefined || text === null) return;
-            const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            const normalized = sanitizeLegacyLogText(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
             const segments = normalized.split('\n');
             segments.forEach((segment, index) => {
                 const isLast = index === segments.length - 1;
@@ -656,6 +831,7 @@
                     }
                 }
             });
+            element.innerText = boundLegacyLogText(element.innerText);
         }
 
         function appendLogLine(element, text, direction = '>') {
@@ -685,6 +861,7 @@
             const eventLbl = document.getElementById('eventMessagesLog');
             if (eventLbl) {
                 eventLbl.innerText = '';
+                delete eventLbl.dataset.droppedEntries;
             }
         }
 
@@ -713,9 +890,35 @@
             log.scrollTop = log.scrollHeight;
         }
 
+        function isC1DockProvisioningPayload(payload) {
+            if (!payload || typeof payload !== 'object') return false;
+            return payload.e === 'wifi-scan'
+                || payload.e === 'wifi-provision'
+                || ['wifi.scan', 'wifi.configure', 'wifi.cancel', 'wifi.provision.status'].includes(payload.c);
+        }
+
+        function publishAppJsonPayload(payload, source) {
+            const raw = JSON.stringify(payload);
+            window.dispatchEvent(new CustomEvent(BLE_APP_JSON_EVENT, {
+                detail: {
+                    payload,
+                    raw,
+                    source,
+                    receivedAt: new Date().toISOString()
+                }
+            }));
+
+            if (!isC1DockProvisioningPayload(payload)) return;
+            const log = document.getElementById('c1DockProvisioningLog');
+            if (!log) return;
+            appendLogLine(log, `RX(${source}): ${raw}`, '>');
+            log.scrollTop = log.scrollHeight;
+        }
+
         function handleAppJsonNotificationText(text, source = 'APP') {
             const responses = dispatchEsimPayloads(parseBufferedJsonResponses(text, source), source);
             responses.forEach(response => {
+                publishAppJsonPayload(response, source);
                 if (response.e !== undefined) {
                     const eventLbl = document.getElementById('eventMessagesLog');
                     if (eventLbl) {
@@ -799,9 +1002,27 @@
         }
 
         function applyBleCommandAvailability(subscriptions) {
+            bleChannelCapabilities = Object.fromEntries(
+                Object.entries(subscriptions || {}).map(([name, value]) => [
+                    name,
+                    { ...value }
+                ])
+            );
+            document.querySelectorAll('[data-generated-ble-capability-notice="true"]').forEach(notice => notice.remove());
             document.querySelectorAll('.cmd').forEach(control => {
                 control.disabled = false;
-                delete control.dataset.bleDisabledReason;
+                delete control.dataset.bleCapabilityDisabledReason;
+                if (!control.dataset.safetyDisabledReason) {
+                    delete control.dataset.bleDisabledReason;
+                    control.removeAttribute('aria-disabled');
+                    control.removeAttribute('aria-describedby');
+                    if (control.dataset.bleOriginalTitle) {
+                        control.title = control.dataset.bleOriginalTitle;
+                    } else {
+                        control.removeAttribute('title');
+                    }
+                    delete control.dataset.bleOriginalTitle;
+                }
             });
             document.querySelectorAll('[data-ble-requires]').forEach(owner => {
                 const required = String(owner.dataset.bleRequires || '')
@@ -812,12 +1033,25 @@
                 const controls = owner.classList.contains('cmd')
                     ? [owner]
                     : Array.from(owner.querySelectorAll('.cmd'));
-                const reason = `BLE 通道不可用: ${unavailable.join(', ')}`;
+                const reason = missingBleChannelReason(unavailable);
+                const notice = document.createElement('span');
+                notice.className = 'ble-capability-notice';
+                notice.dataset.generatedBleCapabilityNotice = 'true';
+                notice.setAttribute('role', 'status');
+                notice.textContent = reason;
+                owner.prepend(notice);
                 controls.forEach(control => {
+                    if (!control.dataset.bleOriginalTitle) {
+                        control.dataset.bleOriginalTitle = control.getAttribute('title') || '';
+                    }
                     control.disabled = true;
+                    control.setAttribute('aria-disabled', 'true');
+                    control.dataset.bleCapabilityDisabledReason = reason;
                     control.dataset.bleDisabledReason = reason;
+                    control.title = reason;
                 });
             });
+            enforceUnifiedSafetyGate();
         }
 
         async function startDefaultBleNotifications() {
@@ -827,10 +1061,15 @@
             appJsonFragmentBuffers.clear();
             const subscriptions = {
                 transport: { status: 'pending' },
-                nus: { status: 'pending' },
+                nus: {
+                    status: 'unsupported',
+                    error: '当前 BLE Transport 协议中 NUS/CH=0 保留，未启用'
+                },
                 app: { status: 'pending' },
                 dfu: { status: 'pending' }
             };
+            bleChannelCapabilities = subscriptions;
+            console.info('[BLE] NUS CCC skipped: 当前协议 NUS/CH=0 保留未启用');
 
             try {
                 await ensureBleTransportNotifications();
@@ -854,28 +1093,6 @@
                     appLbl.scrollTop = appLbl.scrollHeight;
                 }
             }
-
-            subscriptions.nus = await tryStartDefaultBleNotifications('NUS', uuidSvcNus, uuidCharNotify, event => {
-                const text = new TextDecoder().decode(event.target.value);
-                const lbl = document.getElementById('customCmdRsp');
-                if (lbl) {
-                    appendLog(lbl, text, '>');
-                    lbl.scrollTop = lbl.scrollHeight;
-                }
-
-                if (pendingCommands.size > 0) {
-                    const [commandId, commandInfo] = pendingCommands.entries().next().value;
-                    commandInfo.response += text;
-                    commandInfo.lastActivityTime = Date.now();
-
-                    if (commandInfo.response.endsWith('OK\r\n') || commandInfo.response.endsWith('ERROR\r\n')) {
-                        if (commandInfo.resolve) {
-                            commandInfo.resolve(commandInfo.response);
-                        }
-                        pendingCommands.delete(commandId);
-                    }
-                }
-            });
 
             subscriptions.app = await tryStartDefaultBleNotifications('APP', uuidSvcSatellai, uuidCharApp, event => {
                 const text = new TextDecoder().decode(event.target.value);
@@ -1103,6 +1320,10 @@
         }
 
         function chooseFile(input) {
+            assertLegacyDeviceActionAllowed('legacy.chooseFile', {
+                capability: 'dfu',
+                risk: 'destructive_confirm'
+            });
             console.log(input);
             const file = input.files[0];
             if (!file) { alert('请先选择固件文件'); return; }
@@ -1120,6 +1341,10 @@
         }
 
         function sendCert(input) {
+            assertLegacyDeviceActionAllowed('legacy.sendCert', {
+                capability: 'dfu',
+                risk: 'destructive_confirm'
+            });
             console.log(input);
             const file = input.files[0];
             if (!file) { alert('请先选择证书文件'); return; }
@@ -1140,6 +1365,10 @@
         }
 
         function sendFile(input) {
+            assertLegacyDeviceActionAllowed('legacy.sendFile', {
+                capability: 'dfu',
+                risk: 'destructive_confirm'
+            });
             console.log(input);
             const file = input.files[0];
             if (!file) { alert('请先选择要上传的文件'); return; }
@@ -1407,6 +1636,10 @@
         }
 
         async function sendCmdAndWaitForOK(btn) {
+            assertLegacyDeviceActionAllowed(`legacy.${btn && btn.id ? btn.id : 'factory_command'}`, {
+                capability: 'nus',
+                risk: 'write_confirm'
+            });
             document.querySelectorAll('.cmd').forEach(btn => btn.disabled = true);
             const lbl = document.querySelector(`label[for="${btn.id}"]`);
             lbl.innerText = '执行中...'; lbl.style.color ='gray';
@@ -1422,6 +1655,7 @@
             else lbl.style.color = 'orange';
             
             document.querySelectorAll('.cmd').forEach(btn => btn.disabled = false);
+            enforceUnifiedSafetyGate();
         }
 
         const sensorRTTransferHandler = event => {
@@ -1462,12 +1696,18 @@
 
         // New helper function to send app commands and display response
         async function sendAppCommandViaBle(jsonString, options = {}) {
+            assertLegacyDeviceActionAllowed(
+                `legacy.${options.expectedCommand || options.labelPrefix || 'app_command'}`,
+                appCommandSafetyOverrides(jsonString)
+            );
             const {
                 containerSelector = '#commandConsoleSection',
                 logElementId = 'appCmdRspLog',
                 labelPrefix = 'APP',
                 responseTimeout = DEFAULT_APP_RESPONSE_TIMEOUT,
-                maxWait = DEFAULT_APP_RESPONSE_MAX_WAIT
+                maxWait = DEFAULT_APP_RESPONSE_MAX_WAIT,
+                logRequestText = jsonString,
+                logResponse = true
             } = options;
 
             if (!peripheral.device || !peripheral.device.gatt.connected) {
@@ -1484,7 +1724,7 @@
 
             const logElement = document.getElementById(logElementId);
             if (logElement) {
-                appendLog(logElement, `SENDING(${labelPrefix}): ${jsonString}\n`, '<');
+                appendLog(logElement, `SENDING(${labelPrefix}): ${String(logRequestText)}\n`, '<');
                 logElement.scrollTop = logElement.scrollHeight;
             }
 
@@ -1512,7 +1752,7 @@
                     });
                     await peripheral.sendCmd(uuidSvcSatellai, uuidCharApp, jsonString);
                     if (logElement) {
-                        appendLog(logElement, `SENT(${labelPrefix}): ${jsonString}\n`, '<');
+                        appendLog(logElement, `SENT(${labelPrefix}): ${String(logRequestText)}\n`, '<');
                         logElement.scrollTop = logElement.scrollHeight;
                     }
                     if (pendingAppResponse === responseState) {
@@ -1523,7 +1763,7 @@
                         }, overallMs);
                     }
                     const rsp = await responsePromise;
-                    if (logElement && String(rsp ?? '').length > 0) {
+                    if (logResponse && logElement && String(rsp ?? '').length > 0) {
                         appendLog(logElement, `RESP(${labelPrefix}): ${rsp}\n`, '>');
                         logElement.scrollTop = logElement.scrollHeight;
                     }
@@ -1541,6 +1781,7 @@
             } finally {
                 const shouldEnable = peripheral.device && peripheral.device.gatt && peripheral.device.gatt.connected;
                 if (shouldEnable) controls.forEach(el => el.disabled = false);
+                enforceUnifiedSafetyGate();
             }
         }
 
@@ -1689,16 +1930,17 @@
 
             const title = document.createElement('div');
             title.className = 'text-xs text-gray-500 mb-1';
-            title.textContent = `${direction === 'rx' ? '收到' : '发送'} #${id ?? 0}${meta ? ` · ${meta}` : ''}`;
+            title.textContent = sanitizeLegacyLogText(`${direction === 'rx' ? '收到' : '发送'} #${id ?? 0}${meta ? ` · ${meta}` : ''}`);
 
             const content = document.createElement('div');
             content.className = 'text-gray-900 whitespace-pre-wrap break-words';
-            content.textContent = normalizeNtnSmsText(text);
+            content.textContent = sanitizeLegacyLogText(normalizeNtnSmsText(text));
 
             bubble.appendChild(title);
             bubble.appendChild(content);
             row.appendChild(bubble);
             log.appendChild(row);
+            boundLegacyLogChildren(log);
             log.scrollTop = log.scrollHeight;
         }
 
@@ -1863,7 +2105,11 @@
             try {
                 return JSON.parse(str.trim());
             } catch (error) {
-                console.warn('无法解析 JSON 响应:', str, error);
+                console.warn(
+                    '无法解析 JSON 响应:',
+                    sanitizeLegacyLogText(str),
+                    sanitizeLegacyLogText(error && error.message ? error.message : error)
+                );
                 return null;
             }
         }
@@ -1993,13 +2239,14 @@
         }
 
         function appendEsimTextLogLine(log, message, direction = '>') {
-            const value = String(message ?? '');
+            const value = sanitizeLegacyLogText(message);
             const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
             const text = /[\r\n]$/.test(value) ? normalized : `${normalized}\n`;
             text.split('\n').forEach((segment, index, segments) => {
                 if (index === segments.length - 1 && segment === '') return;
                 log.appendChild(document.createTextNode(`${timestamp()}${direction} ${segment}\n`));
             });
+            log.textContent = boundLegacyLogText(log.textContent);
         }
 
         function appendEsimRawBodyDetails(log, label, body) {
@@ -2007,16 +2254,17 @@
             details.className = 'esim-raw-body-details';
 
             const summary = document.createElement('summary');
-            summary.textContent = label;
+            summary.textContent = sanitizeLegacyLogText(label);
             details.appendChild(summary);
 
             const pre = document.createElement('pre');
             pre.className = 'esim-raw-body';
-            pre.textContent = String(body ?? '');
+            pre.textContent = `[BODY REDACTED, ${new TextEncoder().encode(String(body ?? '')).byteLength} bytes]`;
             details.appendChild(pre);
 
             log.appendChild(details);
             log.appendChild(document.createTextNode('\n'));
+            log.textContent = boundLegacyLogText(log.textContent);
         }
 
         function appendEsimLog(logId, message, direction = '>', rawBody) {
@@ -2136,7 +2384,7 @@
                 owner: ESIM_RELAY_CLIENT_ID,
                 updatedAt: now,
                 id: request?.id ?? null,
-                url: request?.url || '',
+                url: sanitizeLegacyLogText(request?.url || ''),
                 bodyBytes: utf8ByteLength(request?.body || '')
             };
             if (!writeJsonStorage(storageKey, next)) return true;
@@ -2349,7 +2597,7 @@
             responses.forEach(response => {
                 const eventName = getEsimPayloadName(response);
                 if (eventName.startsWith('esim.')) {
-                    console.info(`[eSIM] ${source} event`, response);
+                    console.info(`[eSIM] ${source} event`, sanitizeLegacyLogText(JSON.stringify(response)));
                     handleEsimEvent(response);
                     notifyEsimEventWaiters(response);
                 }
@@ -2473,7 +2721,6 @@
             profiles.forEach(profile => {
                 const row = document.createElement('div');
                 row.className = 'esim-profile-row' + (profile.enabled ? ' is-enabled' : '');
-                row.dataset.iccid = profile.iccid;
                 row.dataset.enabled = profile.enabled ? '1' : '0';
 
                 const main = document.createElement('div');
@@ -2493,7 +2740,7 @@
 
                 const iccidEl = document.createElement('span');
                 iccidEl.className = 'esim-profile-iccid';
-                iccidEl.textContent = profile.iccid;
+                iccidEl.textContent = sanitizeLegacyLogText(profile.iccid);
 
                 main.appendChild(badge);
                 main.appendChild(nameWrap);
@@ -2706,7 +2953,7 @@
                 return;
             }
 
-            setEsimMessage(`正在启用 ICCID ${targetIccid}...`, '#2563eb');
+            setEsimMessage(`正在启用 ICCID ${sanitizeLegacyLogText(targetIccid)}...`, '#2563eb');
             const payload = await sendEsimCommand({ c: 'esim.enable', p: { iccid: targetIccid } }, 'esim.enable', { maxWait: 10000 });
             const errorText = esimCommandErrorText(payload, 'esim.enable');
             if (errorText) {
@@ -2723,7 +2970,7 @@
                 return;
             }
 
-            setEsimMessage(`正在禁用 ICCID ${targetIccid}...`, '#2563eb');
+            setEsimMessage(`正在禁用 ICCID ${sanitizeLegacyLogText(targetIccid)}...`, '#2563eb');
             const payload = await sendEsimCommand({ c: 'esim.disable', p: { iccid: targetIccid } }, 'esim.disable', { maxWait: 10000 });
             const errorText = esimCommandErrorText(payload, 'esim.disable');
             if (errorText) {
@@ -2740,7 +2987,7 @@
                 return;
             }
 
-            setEsimMessage(`正在删除 ICCID ${targetIccid}...`, '#dc2626');
+            setEsimMessage(`正在删除 ICCID ${sanitizeLegacyLogText(targetIccid)}...`, '#dc2626');
             const payload = await sendEsimCommand({ c: 'esim.delete', p: { iccid: targetIccid } }, 'esim.delete', { maxWait: 10000 });
             const errorText = esimCommandErrorText(payload, 'esim.delete');
             if (errorText) {
@@ -2787,7 +3034,7 @@
                 `QUEUE #${request?.id ?? '-'} ${request?.url || '(empty url)'}`,
                 '>'
             );
-            console.info('[eSIM] queue HTTPS relay', request);
+            console.info('[eSIM] queue HTTPS relay', sanitizeLegacyLogText(JSON.stringify(request)));
             esimDownloadState.relayQueue = esimDownloadState.relayQueue
                 .catch(() => undefined)
                 .then(() => relayEsimHttpsRequest(request))
@@ -2804,7 +3051,7 @@
         }
 
         async function fetchEsimHttpsViaProxy(url, body, smdpAddress, signal) {
-            console.info('[eSIM] fetch local HTTPS relay', { url, smdpAddress, bodyBytes: utf8ByteLength(body) });
+            console.info('[eSIM] fetch local HTTPS relay', sanitizeLegacyLogText(JSON.stringify({ url, smdpAddress, bodyBytes: utf8ByteLength(body) })));
             const response = await fetch('/api/esim/https', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -3061,6 +3308,14 @@
 
         function handleWifiScanEvent(eventData) {
             if (eventData && eventData.e === 'wifi-scan' && eventData.r) {
+                if (eventData.r.done === true) {
+                    const status = eventData.r.status || 'error';
+                    const count = Number(eventData.r.count || 0);
+                    const code = Number(eventData.r.code || 0);
+                    setWifiMessage(`Wi-Fi 扫描终态：${status}，${count} 条，code=${code}`,
+                        status === 'ok' ? '#16a34a' : '#dc2626');
+                    return;
+                }
                 addWifiScanResult(eventData.r);
             }
         }
@@ -3331,20 +3586,34 @@
 
             const lat = document.getElementById('wifiAddLat')?.value.trim();
             const lng = document.getElementById('wifiAddLng')?.value.trim();
-            const params = new URLSearchParams();
-            if (lat && lng) {
-                params.set('lat', lat);
-                params.set('lng', lng);
-            }
-            frame.src = `wifi-location-picker.html${params.toString() ? `?${params}` : ''}`;
+            frame.wifiLocationPickerRequest = { lat, lng };
             frame.style.display = 'block';
-            setTimeout(() => {
+
+            const notifyPickerOpen = () => {
                 try {
-                    frame.contentWindow && frame.contentWindow.postMessage({ type: 'wifi-location-picker-resize' }, '*');
+                    if (!frame.contentWindow) return;
+                    frame.contentWindow.postMessage({
+                        type: 'wifi-location-picker-open',
+                        ...frame.wifiLocationPickerRequest
+                    }, window.location.origin);
                 } catch (error) {
-                    console.warn('无法通知地图选点器调整大小:', error);
+                    console.warn('无法通知地图选点器打开:', error);
                 }
-            }, 250);
+            };
+
+            if (frame.dataset.wifiPickerLoaded === 'true') {
+                requestAnimationFrame(notifyPickerOpen);
+                return;
+            }
+            if (frame.dataset.wifiPickerLoading === 'true') return;
+
+            frame.dataset.wifiPickerLoading = 'true';
+            frame.addEventListener('load', () => {
+                delete frame.dataset.wifiPickerLoading;
+                frame.dataset.wifiPickerLoaded = 'true';
+                notifyPickerOpen();
+            }, { once: true });
+            frame.src = 'wifi-location-picker.html';
         }
 
         function closeWifiLocationPicker() {
@@ -3353,9 +3622,14 @@
         }
 
         window.addEventListener('message', (event) => {
-            if (!event.data || event.data.type !== 'wifi-location-selected') return;
-            setWifiTagLocation(event.data);
-            closeWifiLocationPicker();
+            const frame = document.getElementById('wifiLocationPickerFrame');
+            if (!frame || event.source !== frame.contentWindow || event.origin !== window.location.origin) return;
+            if (event.data?.type === 'wifi-location-selected') {
+                setWifiTagLocation(event.data);
+                closeWifiLocationPicker();
+            } else if (event.data?.type === 'wifi-location-picker-error') {
+                setWifiMessage(event.data.message || '地图选点器不可用。', '#dc2626');
+            }
         });
 
         async function handleWifiStatus() {
@@ -3593,12 +3867,10 @@
 
         // 父页面JS
         function receiveAmapFenceData(data) {
-            const openEditBtn = document.getElementById('openEditorBtn');
-            console.log("从围栏编辑器接收到的数据:", data);
-            openEditBtn.disabled = false;
-            displayReceivedData(data);
-
-            closeFenceEditor(); // 关闭编辑器模态框
+            assertLegacyDeviceActionAllowed('fence.message_write', {
+                capability: 'fence_write',
+                policy: 'policy_blocked'
+            });
         }
 
         function formatCoordinates(pointsArray) {
@@ -3614,20 +3886,10 @@
         function displayReceivedData(data) {
             const dataListDiv = document.getElementById('dataList');
             if (!data) { // 检查 data 是否存在
-                dataListDiv.innerHTML = '<p class="text-gray-500 italic">接收到的数据为空或无效。</p>';
+                dataListDiv.textContent = '接收到的数据为空或无效。围栏写入仍保持冻结。';
                 return;
             }
-            // 将接收到的数据对象转换为格式化的JSON字符串
-            const jsonString = JSON.stringify(data); // null, 2 用于美化输出（缩进2个空格）
-            try {
-                sendAppCommandViaBle(jsonString);
-            } catch (e) {
-                alert('添加围栏参数JSON无效 (Invalid JSON for Add Fence parameters): ' + e.message);
-                console.error('Invalid JSON for Add Fence:', e);
-                paramJsonTextarea.focus();
-            }
-            // 将JSON字符串包裹在<pre>标签中以保持格式，并应用Tailwind样式
-            dataListDiv.innerHTML = `<pre class="bg-white p-3 border border-gray-200 rounded-md text-sm shadow overflow-auto max-h-96">${jsonString}</pre>`;
+            dataListDiv.textContent = '已忽略围栏编辑器数据：来源、schema、sandbox 与风险策略尚未形成契约，未执行设备写入。';
         }
 
         function postMessageToFenceEditor(type, payload = {}) {
@@ -3636,7 +3898,7 @@
             const message = { source: 'index-parent', type, payload };
             try {
                 if (iframe.contentWindow) {
-                    iframe.contentWindow.postMessage(message, '*');
+                    iframe.contentWindow.postMessage(message, window.location.origin);
                 }
             } catch (error) {
                 console.warn('无法向围栏编辑器发送消息:', error);
@@ -3645,6 +3907,10 @@
 
         // 父页面JS
         function openFenceEditor() {
+            assertLegacyDeviceActionAllowed('fence.open_editor', {
+                capability: 'fence_write',
+                policy: 'policy_blocked'
+            });
             const iframe = document.getElementById('fenceEditorFrame');
             if (!iframe) return;
             iframe.style.display = 'block';
@@ -3672,15 +3938,10 @@
         window.addEventListener('message', event => {
             const data = event.data;
             if (!data || data.source !== 'gps-editor') return;
-            if (data.type === 'editorModalClosed') {
-                editorModalClosed();
-            } else if (data.type === 'fence-data') {
-                receiveAmapFenceData(data.payload);
-            } else if (data.type === 'log') {
-                console.log('[GPS EDITOR]', data.payload);
-            } else if (data.type === 'editor-ready') {
-                console.log('[GPS EDITOR] ready state:', data.payload);
-            }
+            // No source/origin/schema contract exists yet. All fence messages are ignored,
+            // including apparently harmless close/log events, so the legacy route cannot
+            // become an accidental write bypass.
+            console.warn('[GPS EDITOR] message ignored: fence integration is policy_blocked');
         });
 
         function crc8(current, previous = 0) {
@@ -3750,3 +4011,4 @@
             openWifiLocationPicker,
             clearWifiLocation
         });
+        enforceUnifiedSafetyGate();

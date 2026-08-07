@@ -7,7 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "serve": "npm run dev",
     "type-check": "vue-tsc --noEmit --skipLibCheck",
-    "test": "node --test --test-isolation=none src/views/ble/connectionState.test.ts",
+    "test": "node --test --test-isolation=none src/views/ble/connectionState.test.ts src/views/ble/c1DockProvisioning.test.ts src/views/ble/safetyState.test.ts src/views/ble/legacySafetyBoundary.test.ts src/views/ble/legacyNotificationBoundary.test.ts src/views/ble/wifiLocationPickerBoundary.test.ts",
     "build": "npm run type-check && vite build",
     "build:staging": "vite build --mode staging",
     "report": "rimraf dist && vite build",

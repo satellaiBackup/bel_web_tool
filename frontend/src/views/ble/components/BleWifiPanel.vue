@@ -177,7 +177,8 @@ const wifiResultPanels = [
             </div>
             <iframe
               id="wifiLocationPickerFrame"
-              src="wifi-location-picker.html"
+              src="about:blank"
+              title="Wi-Fi 信标地图选点"
               class="tool-overlay-frame wifi-picker-frame"
             ></iframe>
           </div>

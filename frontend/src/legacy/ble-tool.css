@@ -45,6 +45,116 @@
   display: none !important;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ble-capability-notice {
+  display: block;
+  grid-column: 1 / -1;
+  width: 100%;
+  padding: 7px 9px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(180, 83, 9, 0.28);
+  border-radius: 6px;
+  background: var(--ble-amber-soft);
+  color: var(--ble-amber);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.safety-status-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--ble-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: var(--ble-shadow-soft);
+  backdrop-filter: blur(12px);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.safety-status-bar[data-gate-allowed="false"] {
+  border-color: #f1b6b6;
+}
+
+.safety-lock-badge {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border: 1px solid rgba(220, 38, 38, 0.32);
+  border-radius: 999px;
+  background: var(--ble-danger-soft);
+  color: var(--ble-danger);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.safety-lock-badge[data-allowed="true"] {
+  border-color: rgba(22, 163, 74, 0.32);
+  background: #f0fdf4;
+  color: var(--ble-success);
+}
+
+.safety-status-item {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  color: var(--ble-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.safety-status-item b {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.safety-status-item[data-state="unknown"],
+.safety-status-item[data-state="stale"],
+.safety-status-item[data-state="failed"],
+.safety-status-item[data-state="unknown_result"] {
+  color: var(--ble-danger);
+}
+
+.safety-gate-reason {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 4px 10px;
+  border: 1px solid rgba(220, 38, 38, 0.28);
+  border-radius: 6px;
+  background: var(--ble-danger-soft);
+  color: #991b1b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.safety-gate-reason strong {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
 .admin-brand {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr);
@@ -163,14 +273,22 @@
   line-height: 1.45;
 }
 
-.event-live-dot {
+.event-live-state {
   flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  margin-top: 6px;
+  margin-top: 4px;
+  padding: 4px 7px;
+  border: 1px solid rgba(220, 38, 38, 0.28);
   border-radius: 999px;
-  background: var(--ble-success);
-  box-shadow: 0 0 0 5px rgba(22, 163, 74, 0.12);
+  background: var(--ble-danger-soft);
+  color: var(--ble-danger);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.event-live-state[data-state="fresh"] {
+  border-color: rgba(22, 163, 74, 0.28);
+  background: #f0fdf4;
+  color: var(--ble-success);
 }
 
 .event-toolbar {
@@ -214,8 +332,7 @@
 }
 
 .admin-hero {
-  position: sticky;
-  top: 0;
+  position: static;
   z-index: 8;
   display: grid;
   grid-template-columns: minmax(200px, 0.42fr) minmax(520px, 1fr);
@@ -406,6 +523,36 @@
   background: #ffffff;
   color: var(--ble-primary-deep);
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.ble-tool-admin button:focus-visible,
+.ble-tool-admin input:focus-visible,
+.ble-tool-admin select:focus-visible,
+.ble-tool-admin textarea:focus-visible,
+.ble-tool-admin [tabindex]:focus-visible {
+  outline: 3px solid #0ea5e9;
+  outline-offset: 2px;
+}
+
+.ble-tool-admin [aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.fence-policy-banner {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(220, 38, 38, 0.34);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--ble-danger-soft);
+  color: #991b1b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fence-policy-banner strong {
+  font-size: 13px;
 }
 
 .quick-actions {
@@ -826,7 +973,8 @@
 .log-panel {
   background: #111827;
   color: #dbeafe;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }
 
 .esim-raw-body-details {
@@ -1147,7 +1295,8 @@
 
 .ble-tool-admin code {
   color: #334155;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }
 
 html.dark .ble-workbench {
@@ -1174,6 +1323,7 @@ html.dark .ble-tool-admin {
 }
 
 html.dark .admin-hero,
+html.dark .safety-status-bar,
 html.dark .admin-card,
 html.dark .event-card {
   background: rgba(31, 41, 55, 0.94);
@@ -1315,5 +1465,22 @@ html.dark .log-panel.chat {
     top: 12px;
     right: 12px;
     left: 12px;
+  }
+}
+
+@media (forced-colors: active) {
+  .ble-tool-admin button:focus-visible,
+  .ble-tool-admin input:focus-visible,
+  .ble-tool-admin select:focus-visible,
+  .ble-tool-admin textarea:focus-visible,
+  .ble-tool-admin [tabindex]:focus-visible {
+    outline: 3px solid Highlight;
+  }
+
+  .safety-lock-badge,
+  .safety-gate-reason,
+  .fence-policy-banner,
+  .event-live-state {
+    border-color: CanvasText;
   }
 }

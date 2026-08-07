@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { ref } from "vue";
+import { prepareLogForOutput } from "../safetyState";
+import type { SafetyStreamState } from "../safetyState";
 import type { LegacyBridge } from "../types";
 
 defineOptions({
@@ -8,7 +11,47 @@ defineOptions({
 defineProps<{
   bridge: LegacyBridge;
   focusedLogId: string | null;
+  eventStreamState: SafetyStreamState;
 }>();
+
+const streamLabels: Record<SafetyStreamState, string> = {
+  connecting: "连接中",
+  fresh: "已对账",
+  reconnecting: "重连中",
+  stale: "已过期",
+  snapshot_syncing: "对账中",
+  failed: "不可用"
+};
+
+const actionStatus = ref("");
+
+function safeEventLogText(): string {
+  return prepareLogForOutput(
+    document.getElementById("eventMessagesLog")?.textContent || ""
+  );
+}
+
+async function copyEventLog(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(safeEventLogText());
+    actionStatus.value = "已复制脱敏事件日志";
+  } catch {
+    actionStatus.value = "复制失败，请检查剪贴板权限";
+  }
+}
+
+function exportEventLog(): void {
+  const blob = new Blob([safeEventLogText()], {
+    type: "text/plain;charset=utf-8"
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `eventMessagesLog-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
+  link.click();
+  URL.revokeObjectURL(url);
+  actionStatus.value = "已导出脱敏事件日志";
+}
 </script>
 
 <template>
@@ -20,7 +63,13 @@ defineProps<{
           <h2>事件消息</h2>
           <p>设备上报的 <code>{"e":"xxxxx"}</code> 事件会持续写入这里。</p>
         </div>
-        <span class="event-live-dot"></span>
+        <span
+          class="event-live-state"
+          :data-state="eventStreamState"
+          role="status"
+        >
+          {{ streamLabels[eventStreamState] }}
+        </span>
       </div>
 
       <div class="event-toolbar">
@@ -39,13 +88,34 @@ defineProps<{
         >
           聚焦
         </button>
+        <button
+          class="cmd-button secondary"
+          type="button"
+          @click="copyEventLog"
+        >
+          复制
+        </button>
+        <button
+          class="cmd-button secondary"
+          type="button"
+          @click="exportEventLog"
+        >
+          导出
+        </button>
       </div>
+
+      <span class="sr-only" role="status" aria-live="polite">
+        {{ actionStatus }}
+      </span>
 
       <div
         id="eventMessagesLog"
         class="log-panel event-log"
+        role="log"
+        aria-live="off"
+        aria-label="设备事件消息"
         :class="{ 'is-focused': focusedLogId === 'eventMessagesLog' }"
-      ></div>
+      />
     </section>
 
     <section class="event-card">
