@@ -80,7 +80,10 @@ test("high-risk operations retain the verified identity gate", () => {
 
 test("subscription results become per-channel capabilities with actionable reasons", () => {
   const subscriptions = createBleSubscriptions("ready");
-  subscriptions.nus = { status: "unsupported", error: "保留未启用" };
+  subscriptions.transport = {
+    status: "unsupported",
+    error: "TRANSPORT 特征不存在"
+  };
   subscriptions.app = { status: "failed", error: "APP CCC 订阅失败" };
   const state = reduceSafetySessionState(
     {
@@ -92,10 +95,17 @@ test("subscription results become per-channel capabilities with actionable reaso
   );
 
   assert.equal(state.link, "connected");
-  assert.equal(state.capabilities.transport.state, "available");
-  assert.equal(state.capabilities.nus.state, "unavailable");
+  assert.equal(state.capabilities.transport.state, "unavailable");
+  assert.equal(state.capabilities.nus.state, "available");
   assert.equal(state.capabilities.app.state, "failed");
   assert.equal(state.capabilities.dfu.state, "available");
+
+  const nusDecision = evaluateSafetyGate(state, {
+    action: "legacy.nus_command",
+    capability: "nus",
+    risk: "write_confirm"
+  });
+  assert.equal(nusDecision.allowed, true);
 
   const appDecision = evaluateSafetyGate(state, {
     action: "legacy.app_command",

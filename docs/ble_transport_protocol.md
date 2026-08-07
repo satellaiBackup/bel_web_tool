@@ -117,6 +117,8 @@ bit 3..0  逻辑通道号（Channel ID）
 | 14     | ECHO       | 联调回环测试（收到即原样回传）          |
 | 15     | CTRL       | 内部控制通道，ACK/NAK，**App 不直接使用** |
 
+表中的 CH=0 仅表示本 Transport 帧协议内的逻辑通道保留；它不代表设备的独立 Nordic UART Service 被禁用。上位机仍需直接订阅 NUS Notify 特征 `6e400003-b5a3-f393-e0a9-e50e24dcca9e`。
+
 ---
 
 ## 5. ACK/NAK 机制

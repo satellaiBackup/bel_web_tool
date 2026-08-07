@@ -175,7 +175,7 @@ func TestBLEOperationErrorsRemainObservable(t *testing.T) {
 	}
 }
 
-func TestBLEMissingSubscriptionReturnsBadRequestWithoutDisconnecting(t *testing.T) {
+func TestBLEMissingSubscriptionReturnsUnsupportedWithoutDisconnecting(t *testing.T) {
 	connection := &bleConnection{
 		address: "AA:BB:CC:DD:EE:FF",
 		name:    "fixture",
@@ -194,11 +194,19 @@ func TestBLEMissingSubscriptionReturnsBadRequestWithoutDisconnecting(t *testing.
 		"/api/ble/subscribe",
 		`{"serviceUuid":"6e400001-b5a3-f393-e0a9-e50e24dcca9e","characteristicUuid":"6e400003-b5a3-f393-e0a9-e50e24dcca9e"}`,
 	)
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
-	if got := decodeErrorResponse(t, recorder); !strings.Contains(got, "未找到服务") {
-		t.Fatalf("error = %q, want missing-service diagnostic", got)
+	var payload struct {
+		OK          bool   `json:"ok"`
+		Unsupported bool   `json:"unsupported"`
+		Error       string `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode unsupported response: %v", err)
+	}
+	if payload.OK || !payload.Unsupported || !strings.Contains(payload.Error, "未找到服务") {
+		t.Fatalf("unexpected unsupported response: %#v", payload)
 	}
 	if manager.connection != connection || !manager.state().Connected {
 		t.Fatal("missing optional service must preserve the physical connection")
@@ -207,6 +215,26 @@ func TestBLEMissingSubscriptionReturnsBadRequestWithoutDisconnecting(t *testing.
 	case event := <-events:
 		t.Fatalf("missing optional service broadcast a false disconnect: %#v", event)
 	default:
+	}
+}
+
+func TestBLEGATTSubscriptionFailureRemainsBadRequest(t *testing.T) {
+	manager := newHTTPTestManager()
+	manager.subscribeOperation = func(service, characteristic string) error {
+		return newBLEGATTSessionError("发现服务失败", errors.New("operation failed with code 1"))
+	}
+
+	recorder := performBLERequest(
+		manager,
+		http.MethodPost,
+		"/api/ble/subscribe",
+		`{"serviceUuid":"svc","characteristicUuid":"char"}`,
+	)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	if got := decodeErrorResponse(t, recorder); !strings.Contains(got, "BLE GATT 会话失效") {
+		t.Fatalf("error = %q, want stale-session diagnostic", got)
 	}
 }
 

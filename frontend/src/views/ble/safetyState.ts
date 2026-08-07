@@ -219,6 +219,7 @@ export function reduceSafetySessionState(
         localService: "ready",
         link: "connected"
       };
+    case "subscriptions_updated":
     case "subscriptions_resolved":
       return {
         ...state,

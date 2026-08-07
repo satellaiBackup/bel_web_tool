@@ -334,6 +334,15 @@ func (m *bleManager) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := m.executeSubscribe(req.ServiceUUID, req.CharacteristicUUID); err != nil {
+		if isBLEAttributeNotFoundError(err) {
+			log.Printf("[ble] subscribe unsupported service=%s char=%s err=%v", req.ServiceUUID, req.CharacteristicUUID, err)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":          false,
+				"unsupported": true,
+				"error":       err.Error(),
+			})
+			return
+		}
 		log.Printf("[ble] subscribe failed service=%s char=%s err=%v", req.ServiceUUID, req.CharacteristicUUID, err)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -865,13 +874,6 @@ func (m *bleManager) enableNotificationsLocked(conn *bleConnection, serviceUUID,
 		log.Printf("[ble] transport ccc subscribed char=%s", normalizedCharUUID)
 	}
 
-	if normalizedServiceUUID == uuidSvcSatellai && normalizedCharUUID != uuidCharTP {
-		if _, ok := charToTransportChannel[normalizedCharUUID]; ok {
-			if _, _, err := m.ensureTransportNotificationsLocked(conn); err != nil && !errors.Is(err, errTransportUnavailable) {
-				return err
-			}
-		}
-	}
 	return nil
 }
 
@@ -974,6 +976,9 @@ func discoverServicesWithRetry(device bluetooth.Device, filter []bluetooth.UUID)
 			return services, nil
 		}
 		lastErr = err
+		if isBLEAttributeNotFoundError(err) {
+			break
+		}
 		if attempt < bleDiscoveryAttempts-1 {
 			time.Sleep(bleDiscoveryBackoff * time.Duration(attempt+1))
 		}
@@ -989,6 +994,9 @@ func discoverCharacteristicsWithRetry(service bluetooth.DeviceService, filter []
 			return chars, nil
 		}
 		lastErr = err
+		if isBLEAttributeNotFoundError(err) {
+			break
+		}
 		if attempt < bleDiscoveryAttempts-1 {
 			time.Sleep(bleDiscoveryBackoff * time.Duration(attempt+1))
 		}

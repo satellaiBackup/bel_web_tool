@@ -4,6 +4,7 @@ import {
   createBleConnectionState,
   createBleSubscriptions,
   getBleConnectionControls,
+  getBleSubscriptionProgress,
   reduceBleConnectionState,
   type BleConnectionState
 } from "./connectionState.ts";
@@ -85,9 +86,60 @@ test("connect and subscribe phases prevent duplicate connection actions", () => 
   assert.equal(subscribing.phase, "subscribing");
 });
 
+test("subscription progress exposes ready channels without completing optional probes", () => {
+  const subscribing = reduce(
+    createBleConnectionState(),
+    { type: "sync_connected", device }
+  );
+  const subscriptions = createBleSubscriptions("pending");
+  subscriptions.nus = { status: "ready" };
+  const updated = reduceBleConnectionState(subscribing, {
+    type: "subscriptions_updated",
+    subscriptions
+  });
+
+  assert.equal(updated.phase, "subscribing");
+  assert.equal(updated.subscriptions.nus.status, "ready");
+  assert.equal(updated.subscriptions.transport.status, "pending");
+});
+
+test("subscription progress follows the real channel order and advances visibly", () => {
+  const subscribing = reduce(
+    createBleConnectionState(),
+    { type: "sync_connected", device }
+  );
+  const initialProgress = getBleSubscriptionProgress(subscribing);
+  assert.deepEqual(
+    initialProgress.items.map(item => [item.name, item.statusText]),
+    [
+      ["nus", "订阅中"],
+      ["app", "等待"],
+      ["dfu", "等待"],
+      ["transport", "等待"]
+    ]
+  );
+  assert.equal(initialProgress.completed, 0);
+  assert.equal(initialProgress.percent, 0);
+
+  const subscriptions = createBleSubscriptions("pending");
+  subscriptions.nus = { status: "ready" };
+  subscriptions.app = { status: "ready" };
+  const updated = reduceBleConnectionState(subscribing, {
+    type: "subscriptions_updated",
+    subscriptions
+  });
+  const updatedProgress = getBleSubscriptionProgress(updated);
+  assert.equal(updatedProgress.activeLabel, "DFU");
+  assert.equal(updatedProgress.completed, 2);
+  assert.equal(updatedProgress.percent, 50);
+  assert.equal(updatedProgress.items[0].statusText, "已就绪");
+  assert.equal(updatedProgress.items[1].statusText, "已就绪");
+  assert.equal(updatedProgress.items[2].statusText, "订阅中");
+});
+
 test("supported channel failures keep the physical connection in partial mode", () => {
   const failures: Array<{
-    name: "transport" | "app" | "dfu";
+    name: "transport" | "nus" | "app" | "dfu";
     status: "unsupported" | "failed";
     error: string;
   }> = [
@@ -96,6 +148,7 @@ test("supported channel failures keep the physical connection in partial mode", 
       status: "unsupported",
       error: "transport characteristic not found"
     },
+    { name: "nus", status: "failed", error: "nus subscription failed" },
     { name: "app", status: "failed", error: "app subscription failed" },
     { name: "dfu", status: "failed", error: "dfu subscription failed" }
   ];
@@ -106,10 +159,6 @@ test("supported channel failures keep the physical connection in partial mode", 
       { type: "sync_connected", device }
     );
     const subscriptions = createBleSubscriptions("ready");
-    subscriptions.nus = {
-      status: "unsupported",
-      error: "当前协议保留未启用"
-    };
     subscriptions[failure.name] = {
       status: failure.status,
       error: failure.error
@@ -122,26 +171,25 @@ test("supported channel failures keep the physical connection in partial mode", 
     assert.equal(partial.phase, "connected_partial", failure.name);
     assert.equal(partial.device?.address, device.address);
     assert.match(partial.error || "", new RegExp(failure.name, "i"));
-    assert.doesNotMatch(partial.error || "", /NUS/);
     assert.equal(getBleConnectionControls(partial).disconnectVisible, true);
   });
 });
 
-test("reserved unsupported NUS does not degrade supported connections", () => {
+test("unsupported NUS degrades the connection capability", () => {
   const subscriptions = createBleSubscriptions("ready");
   subscriptions.nus = {
     status: "unsupported",
-    error: "当前协议保留未启用"
+    error: "nus characteristic not found"
   };
-  const connected = reduce(
+  const partial = reduce(
     createBleConnectionState(),
     { type: "sync_connected", device },
     { type: "subscriptions_resolved", subscriptions }
   );
 
-  assert.equal(connected.phase, "connected");
-  assert.equal(connected.error, undefined);
-  assert.equal(connected.subscriptions.nus.status, "unsupported");
+  assert.equal(partial.phase, "connected_partial");
+  assert.match(partial.error || "", /NUS/);
+  assert.equal(partial.subscriptions.nus.status, "unsupported");
 });
 
 test("all subscriptions ready produces the fully connected phase", () => {

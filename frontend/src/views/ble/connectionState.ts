@@ -69,6 +69,7 @@ export type BleConnectionEvent =
   | { type: "connect_started"; device: BleDeviceSummary }
   | { type: "reconnect_started"; device: BleDeviceSummary }
   | { type: "subscribing"; device: BleDeviceSummary }
+  | { type: "subscriptions_updated"; subscriptions: BleSubscriptions }
   | { type: "subscriptions_resolved"; subscriptions: BleSubscriptions }
   | { type: "connect_failed"; error: string; device?: BleDeviceSummary }
   | { type: "disconnect_started" }
@@ -91,12 +92,37 @@ export interface BleConnectionControls {
   filtersDisabled: boolean;
 }
 
+export interface BleSubscriptionProgressItem {
+  name: BleSubscriptionName;
+  label: string;
+  status: BleSubscriptionStatus;
+  statusText: string;
+  icon: string;
+  active: boolean;
+  error?: string;
+}
+
+export interface BleSubscriptionProgress {
+  completed: number;
+  total: number;
+  percent: number;
+  activeLabel?: string;
+  items: BleSubscriptionProgressItem[];
+}
+
 const subscriptionNames: BleSubscriptionName[] = [
-  "transport",
   "nus",
   "app",
-  "dfu"
+  "dfu",
+  "transport"
 ];
+
+const subscriptionLabels: Record<BleSubscriptionName, string> = {
+  nus: "NUS",
+  app: "APP",
+  dfu: "DFU",
+  transport: "TRANSPORT"
+};
 
 export function createBleSubscriptions(
   status: BleSubscriptionStatus = "idle"
@@ -119,6 +145,54 @@ export function createBleConnectionState(): BleConnectionState {
   };
 }
 
+export function getBleSubscriptionProgress(
+  state: BleConnectionState
+): BleSubscriptionProgress {
+  const activeName =
+    state.phase === "subscribing"
+      ? subscriptionNames.find(name =>
+          ["idle", "pending"].includes(state.subscriptions[name].status)
+        )
+      : undefined;
+  const items = subscriptionNames.map(name => {
+    const subscription = state.subscriptions[name];
+    const active = name === activeName;
+    let statusText = "等待";
+    let icon = "·";
+    if (active) {
+      statusText = "订阅中";
+    } else if (subscription.status === "ready") {
+      statusText = "已就绪";
+      icon = "✓";
+    } else if (subscription.status === "unsupported") {
+      statusText = "未开放";
+      icon = "—";
+    } else if (subscription.status === "failed") {
+      statusText = "失败";
+      icon = "!";
+    }
+    return {
+      name,
+      label: subscriptionLabels[name],
+      status: subscription.status,
+      statusText,
+      icon,
+      active,
+      error: subscription.error
+    };
+  });
+  const completed = items.filter(
+    item => item.status !== "idle" && item.status !== "pending"
+  ).length;
+  return {
+    completed,
+    total: items.length,
+    percent: Math.round((completed / items.length) * 100),
+    activeLabel: activeName ? subscriptionLabels[activeName] : undefined,
+    items
+  };
+}
+
 function deviceLabel(device?: BleDeviceSummary): string {
   if (!device) return "设备";
   const name = device.name || "设备";
@@ -132,11 +206,7 @@ function isDegradedSubscription(
   name: BleSubscriptionName,
   subscriptions: BleSubscriptions
 ): boolean {
-  const subscription = subscriptions[name];
-  return !(
-    subscription.status === "ready" ||
-    (name === "nus" && subscription.status === "unsupported")
-  );
+  return subscriptions[name].status !== "ready";
 }
 
 function subscriptionFailureSummary(subscriptions: BleSubscriptions): string {
@@ -247,6 +317,11 @@ export function reduceBleConnectionState(
         device: event.device,
         lastDevice: event.device,
         subscriptions: createBleSubscriptions("pending")
+      };
+    case "subscriptions_updated":
+      return {
+        ...state,
+        subscriptions: event.subscriptions
       };
     case "subscriptions_resolved": {
       const partial = subscriptionNames.some(name =>

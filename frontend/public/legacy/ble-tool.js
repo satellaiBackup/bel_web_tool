@@ -296,9 +296,7 @@
 
             publishBleConnectionEvent('sync_connected', { device: lastBleDevice });
             setBleConnectionControls(true);
-            const subscriptions = await startDefaultBleNotifications();
-            applyBleCommandAvailability(subscriptions);
-            publishBleConnectionEvent('subscriptions_resolved', { subscriptions });
+            await startDefaultBleNotifications();
         }
 
         function resetBleConnectionState() {
@@ -752,13 +750,18 @@
                 this.notificationListeners.get(key).add(listener);
 
                 if (!this.notificationSubscriptions.has(key)) {
-                    await bleApiRequest(`${bleApiBase}/subscribe`, {
+                    const response = await bleApiRequest(`${bleApiBase}/subscribe`, {
                         method: 'POST',
                         body: JSON.stringify({
                             serviceUuid: svc,
                             characteristicUuid: ch
                         })
                     });
+                    if (response && response.unsupported) {
+                        const error = new Error(response.error || '设备未提供该通知特征');
+                        error.name = 'BLECapabilityUnavailableError';
+                        throw error;
+                    }
                     this.notificationSubscriptions.add(key);
                 }
             }
@@ -988,11 +991,16 @@
             peripheral.transportReady = true;
         }
 
+        function isBleGATTSessionUnavailable(error) {
+            return bleErrorMessage(error).includes('BLE GATT 会话失效');
+        }
+
         async function tryStartDefaultBleNotifications(label, svc, ch, listener) {
             try {
                 await peripheral.startCmdNotifications(svc, ch, listener);
                 return { status: 'ready' };
             } catch (error) {
+                if (isBleGATTSessionUnavailable(error)) throw error;
                 console.warn(`[WARN] ${label} 通知订阅失败，连接保持可用:`, error);
                 return {
                     status: 'failed',
@@ -1054,6 +1062,16 @@
             enforceUnifiedSafetyGate();
         }
 
+        function publishBleSubscriptionProgress(subscriptions, resolved = false) {
+            const snapshot = Object.fromEntries(
+                Object.entries(subscriptions).map(([name, value]) => [name, { ...value }])
+            );
+            publishBleConnectionEvent(resolved ? 'subscriptions_resolved' : 'subscriptions_updated', {
+                subscriptions: snapshot
+            });
+            applyBleCommandAvailability(snapshot);
+        }
+
         async function startDefaultBleNotifications() {
             peripheral.notificationListeners.clear();
             peripheral.notificationSubscriptions.clear();
@@ -1061,38 +1079,34 @@
             appJsonFragmentBuffers.clear();
             const subscriptions = {
                 transport: { status: 'pending' },
-                nus: {
-                    status: 'unsupported',
-                    error: '当前 BLE Transport 协议中 NUS/CH=0 保留，未启用'
-                },
+                nus: { status: 'pending' },
                 app: { status: 'pending' },
                 dfu: { status: 'pending' }
             };
             bleChannelCapabilities = subscriptions;
-            console.info('[BLE] NUS CCC skipped: 当前协议 NUS/CH=0 保留未启用');
 
-            try {
-                await ensureBleTransportNotifications();
-                subscriptions.transport = { status: 'ready' };
-                console.info('[BLE] transport ccc subscribed');
-                const appLbl = document.getElementById('appCmdRspLog');
-                if (appLbl) {
-                    appendLogLine(appLbl, 'TRANSPORT CCC subscribed: 0000000e-ffff-4fff-8fff-5a7e11a1ffff', '>');
-                    appLbl.scrollTop = appLbl.scrollHeight;
+            subscriptions.nus = await tryStartDefaultBleNotifications('NUS', uuidSvcNus, uuidCharNotify, event => {
+                const text = new TextDecoder().decode(event.target.value);
+                const lbl = document.getElementById('customCmdRsp');
+                if (lbl) {
+                    appendLog(lbl, text, '>');
+                    lbl.scrollTop = lbl.scrollHeight;
                 }
-            } catch (error) {
-                peripheral.transportReady = false;
-                subscriptions.transport = {
-                    status: 'unsupported',
-                    error: bleErrorMessage(error)
-                };
-                console.warn('[WARN] 设备未开放 BLE TRANSPORT 特征，已按老固件小包模式继续:', error);
-                const appLbl = document.getElementById('appCmdRspLog');
-                if (appLbl) {
-                    appendLogLine(appLbl, `TRANSPORT CCC subscribe failed: ${error.message || error}`, '>');
-                    appLbl.scrollTop = appLbl.scrollHeight;
+
+                if (pendingCommands.size > 0) {
+                    const [commandId, commandInfo] = pendingCommands.entries().next().value;
+                    commandInfo.response += text;
+                    commandInfo.lastActivityTime = Date.now();
+
+                    if (commandInfo.response.endsWith('OK\r\n') || commandInfo.response.endsWith('ERROR\r\n')) {
+                        if (commandInfo.resolve) {
+                            commandInfo.resolve(commandInfo.response);
+                        }
+                        pendingCommands.delete(commandId);
+                    }
                 }
-            }
+            });
+            publishBleSubscriptionProgress(subscriptions);
 
             subscriptions.app = await tryStartDefaultBleNotifications('APP', uuidSvcSatellai, uuidCharApp, event => {
                 const text = new TextDecoder().decode(event.target.value);
@@ -1126,6 +1140,7 @@
                     }
                 }
             });
+            publishBleSubscriptionProgress(subscriptions);
 
             subscriptions.dfu = await tryStartDefaultBleNotifications('DFU', uuidSvcSatellai, uuidCharDfu, event => {
                 if (resolveDfu) {
@@ -1135,6 +1150,32 @@
                     console.warn(event.target.value);
                 }
             });
+            publishBleSubscriptionProgress(subscriptions);
+
+            try {
+                await ensureBleTransportNotifications();
+                subscriptions.transport = { status: 'ready' };
+                console.info('[BLE] transport ccc subscribed');
+                const appLbl = document.getElementById('appCmdRspLog');
+                if (appLbl) {
+                    appendLogLine(appLbl, 'TRANSPORT CCC subscribed: 0000000e-ffff-4fff-8fff-5a7e11a1ffff', '>');
+                    appLbl.scrollTop = appLbl.scrollHeight;
+                }
+            } catch (error) {
+                peripheral.transportReady = false;
+                if (isBleGATTSessionUnavailable(error)) throw error;
+                subscriptions.transport = {
+                    status: 'unsupported',
+                    error: bleErrorMessage(error)
+                };
+                console.info(`[BLE] TRANSPORT CCC unavailable, continuing with small-packet channels: ${bleErrorMessage(error)}`);
+                const appLbl = document.getElementById('appCmdRspLog');
+                if (appLbl) {
+                    appendLogLine(appLbl, `TRANSPORT unavailable, using small-packet channels: ${bleErrorMessage(error)}`, '>');
+                    appLbl.scrollTop = appLbl.scrollHeight;
+                }
+            }
+            publishBleSubscriptionProgress(subscriptions, true);
             return subscriptions;
         }
 
@@ -1179,9 +1220,7 @@
                     await peripheral.request();
                 }
                 await peripheral.connect();
-                const subscriptions = await startDefaultBleNotifications();
-                applyBleCommandAvailability(subscriptions);
-                publishBleConnectionEvent('subscriptions_resolved', { subscriptions });
+                await startDefaultBleNotifications();
             } catch (error) {
                 console.error('[ERROR] 设备连接或订阅失败:', error);
                 

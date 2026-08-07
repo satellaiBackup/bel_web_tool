@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import {
   getBleConnectionControls,
+  getBleSubscriptionProgress,
   type BleConnectionState
 } from "../connectionState";
 import type { LegacyBridge } from "../types";
@@ -16,6 +17,9 @@ const props = defineProps<{
 }>();
 
 const controls = computed(() => getBleConnectionControls(props.state));
+const subscriptionProgress = computed(() =>
+  getBleSubscriptionProgress(props.state)
+);
 </script>
 
 <template>
@@ -45,6 +49,48 @@ const controls = computed(() => getBleConnectionControls(props.state));
         <label id="status" role="status" aria-live="polite">
           {{ state.statusText }}
         </label>
+      </div>
+      <div
+        v-if="state.phase === 'subscribing'"
+        class="subscription-progress"
+        aria-label="BLE 通知订阅进度"
+      >
+        <div class="subscription-progress-heading" role="status" aria-live="polite">
+          <span class="subscription-spinner" aria-hidden="true" />
+          <strong>
+            {{
+              subscriptionProgress.activeLabel
+                ? `正在订阅 ${subscriptionProgress.activeLabel} 通知`
+                : "正在确认通知订阅结果"
+            }}
+          </strong>
+          <span>
+            {{ subscriptionProgress.completed }}/{{ subscriptionProgress.total }}
+          </span>
+        </div>
+        <div class="subscription-progress-track" aria-hidden="true">
+          <span :style="{ width: `${subscriptionProgress.percent}%` }" />
+        </div>
+        <ol class="subscription-progress-steps">
+          <li
+            v-for="item in subscriptionProgress.items"
+            :key="item.name"
+            class="subscription-progress-step"
+            :data-status="item.active ? 'active' : item.status"
+            :aria-current="item.active ? 'step' : undefined"
+            :title="item.error"
+          >
+            <span class="subscription-step-icon" aria-hidden="true">
+              <span
+                v-if="item.active"
+                class="subscription-spinner subscription-spinner-small"
+              />
+              <span v-else>{{ item.icon }}</span>
+            </span>
+            <span>{{ item.label }}</span>
+            <strong>{{ item.statusText }}</strong>
+          </li>
+        </ol>
       </div>
       <div v-if="state.error" class="connection-error" role="alert">
         {{ state.error }}
@@ -134,6 +180,131 @@ const controls = computed(() => getBleConnectionControls(props.state));
     minmax(320px, 0.82fr);
 }
 
+.subscription-progress {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  border-radius: 8px;
+  background: rgba(239, 246, 255, 0.72);
+}
+
+.subscription-progress-heading {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--ble-primary-deep);
+  font-size: 13px;
+
+  strong {
+    flex: 1;
+  }
+}
+
+.subscription-spinner {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(37, 99, 235, 0.2);
+  border-top-color: var(--ble-primary);
+  border-radius: 50%;
+  animation: subscription-spin 0.75s linear infinite;
+}
+
+.subscription-spinner-small {
+  width: 12px;
+  height: 12px;
+}
+
+.subscription-progress-track {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+
+  span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--ble-primary);
+    transition: width 180ms ease;
+  }
+}
+
+.subscription-progress-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.subscription-progress-step {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 5px;
+  align-items: center;
+  min-width: 0;
+  color: var(--ble-subtle);
+  font-size: 12px;
+
+  > span:nth-child(2) {
+    overflow: hidden;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  strong {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+}
+
+.subscription-step-icon {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ble-surface);
+  font-weight: 900;
+}
+
+.subscription-progress-step[data-status="active"] {
+  color: var(--ble-primary-deep);
+}
+
+.subscription-progress-step[data-status="ready"] {
+  color: var(--ble-success);
+}
+
+.subscription-progress-step[data-status="failed"] {
+  color: var(--ble-danger);
+}
+
+.subscription-progress-step[data-status="unsupported"] {
+  color: var(--ble-amber);
+}
+
+@keyframes subscription-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subscription-spinner {
+    animation-duration: 1.8s;
+  }
+
+  .subscription-progress-track span {
+    transition: none;
+  }
+}
+
 .connection-action-stack {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -164,6 +335,10 @@ const controls = computed(() => getBleConnectionControls(props.state));
   .ble-connection-controls,
   .connection-action-stack {
     grid-template-columns: 1fr;
+  }
+
+  .subscription-progress-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>
