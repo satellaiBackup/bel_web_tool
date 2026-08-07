@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-type BusinessRouteRegistrar func(mux *http.ServeMux)
+type BusinessRouteRegistrar func(mux *http.ServeMux) error
 
 func RunLocalWebApp(config AppConfig, registerRoutes BusinessRouteRegistrar) error {
 	addr := net.JoinHostPort(config.Host, config.Port)
@@ -36,7 +36,9 @@ func RunLocalWebApp(config AppConfig, registerRoutes BusinessRouteRegistrar) err
 		mux.HandleFunc("/"+config.ManifestPath, handleManifest(staticRoot, config.ManifestPath))
 	}
 	if registerRoutes != nil {
-		registerRoutes(mux)
+		if err := registerRoutes(mux); err != nil {
+			return fmt.Errorf("register business routes: %w", err)
+		}
 	}
 
 	mux.Handle("/", handleStatic(staticRoot))
