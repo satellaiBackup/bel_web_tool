@@ -128,9 +128,20 @@ function deviceLabel(device?: BleDeviceSummary): string {
   return suffix ? `${name} · ${suffix}` : name;
 }
 
+function isDegradedSubscription(
+  name: BleSubscriptionName,
+  subscriptions: BleSubscriptions
+): boolean {
+  const subscription = subscriptions[name];
+  return !(
+    subscription.status === "ready" ||
+    (name === "nus" && subscription.status === "unsupported")
+  );
+}
+
 function subscriptionFailureSummary(subscriptions: BleSubscriptions): string {
   return subscriptionNames
-    .filter(name => subscriptions[name].status !== "ready")
+    .filter(name => isDegradedSubscription(name, subscriptions))
     .map(name => {
       const item = subscriptions[name];
       return `${name.toUpperCase()}: ${item.error || item.status}`;
@@ -238,8 +249,8 @@ export function reduceBleConnectionState(
         subscriptions: createBleSubscriptions("pending")
       };
     case "subscriptions_resolved": {
-      const partial = subscriptionNames.some(
-        name => event.subscriptions[name].status !== "ready"
+      const partial = subscriptionNames.some(name =>
+        isDegradedSubscription(name, event.subscriptions)
       );
       return {
         ...state,

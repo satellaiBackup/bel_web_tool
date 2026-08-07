@@ -15,6 +15,7 @@
 | ACK、NAK、超时和重试 | `TestSendTransportWithRetryHandlesACKNAKAndTimeout` | 最多重试 2 次，每次使用新 MSG_ID，无 pending 泄漏 |
 | 接收重组、CRC 错误、乱序和 5 秒超时 | `transport_test.go` 接收测试 | 成功回 ACK；错误分别回 CRC/SEQ/TIMEOUT NAK；不广播坏载荷 |
 | 前端连接状态、部分能力、断开对账、手动重连、SSE 隔离 | `frontend/src/views/ble/connectionState.test.ts` | 状态转换和操作门控符合连接工作台契约 |
+| 当前协议默认通知策略 | `frontend/src/views/ble/legacyNotificationBoundary.test.ts` | NUS/CH=0 标记为保留未启用，不请求 NUS CCC；TRANSPORT、APP、DFU 初始化不受阻 |
 
 本地执行：
 
@@ -53,8 +54,8 @@ npm run type-check
 2. 打开连接工作台，确认先显示 `syncing`，随后根据 `/api/ble/state` 进入 `idle` 或 `subscribing`，不能在同步前启用业务操作。
 3. 输入约定名称前缀开始扫描，记录首个结果时间、名称、完整 MAC、RSSI；连续扫描应按 MAC 去重并按 RSSI 降序。
 4. 停止扫描，确认不再产生新的 `/scan` 请求；分别保存“有设备”和“无匹配设备”的界面证据。
-5. 选择目标设备并连接，确认一次用户操作只产生一次 `/connect`；记录连接耗时、服务发现和四个订阅结果。
-6. 若 TRANSPORT 不存在，确认保持物理连接并显示 `connected_partial`；大包相关能力禁用，原始错误可见。若 APP/NUS/DFU 订阅失败，同样记录失败通道和影响范围。
+5. 选择目标设备并连接，确认一次用户操作只产生一次 `/connect`；记录连接耗时、服务发现、TRANSPORT/APP/DFU 订阅结果和 NUS 跳过状态。
+6. 当前协议应将 NUS/CH=0 显示为“保留，未启用”，且浏览器网络日志中不得出现 NUS `/subscribe` 请求。若 TRANSPORT 不存在，确认保持物理连接并显示 `connected_partial`；大包相关能力禁用，原始错误可见。若 APP/DFU 订阅失败，同样记录失败通道和影响范围。
 7. 在允许的测试命令上完成一条小包写入和 Notify 回包；保存请求、响应、service/characteristic UUID、时间戳和 payload 长度。敏感 payload 必须脱敏。
 8. 使用固件提供的 CH=14 ECHO 或等价测试钩子发送 MTU 边界附近数据和 2048 B 数据；核对分片序号、ACK、CRC 与耗时。没有明确测试钩子时本步骤标记阻塞，不向业务通道发送探测数据。
 9. 在连接状态下关闭目标设备或移出范围，确认同地址 `disconnected` 事件立即禁用业务操作、清理 pending 命令并保留手动“重新连接”入口。

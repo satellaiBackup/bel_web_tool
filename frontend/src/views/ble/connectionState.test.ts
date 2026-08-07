@@ -85,24 +85,63 @@ test("connect and subscribe phases prevent duplicate connection actions", () => 
   assert.equal(subscribing.phase, "subscribing");
 });
 
-test("subscription failures keep the physical connection in partial mode", () => {
-  const subscribing = reduce(
-    createBleConnectionState(),
-    { type: "sync_connected", device }
-  );
-  const subscriptions = createBleSubscriptions("ready");
-  subscriptions.transport = {
-    status: "unsupported",
-    error: "transport characteristic not found"
-  };
-  const partial = reduceBleConnectionState(subscribing, {
-    type: "subscriptions_resolved",
-    subscriptions
+test("supported channel failures keep the physical connection in partial mode", () => {
+  const failures: Array<{
+    name: "transport" | "app" | "dfu";
+    status: "unsupported" | "failed";
+    error: string;
+  }> = [
+    {
+      name: "transport",
+      status: "unsupported",
+      error: "transport characteristic not found"
+    },
+    { name: "app", status: "failed", error: "app subscription failed" },
+    { name: "dfu", status: "failed", error: "dfu subscription failed" }
+  ];
+
+  failures.forEach(failure => {
+    const subscribing = reduce(
+      createBleConnectionState(),
+      { type: "sync_connected", device }
+    );
+    const subscriptions = createBleSubscriptions("ready");
+    subscriptions.nus = {
+      status: "unsupported",
+      error: "当前协议保留未启用"
+    };
+    subscriptions[failure.name] = {
+      status: failure.status,
+      error: failure.error
+    };
+    const partial = reduceBleConnectionState(subscribing, {
+      type: "subscriptions_resolved",
+      subscriptions
+    });
+
+    assert.equal(partial.phase, "connected_partial", failure.name);
+    assert.equal(partial.device?.address, device.address);
+    assert.match(partial.error || "", new RegExp(failure.name, "i"));
+    assert.doesNotMatch(partial.error || "", /NUS/);
+    assert.equal(getBleConnectionControls(partial).disconnectVisible, true);
   });
-  assert.equal(partial.phase, "connected_partial");
-  assert.equal(partial.device?.address, device.address);
-  assert.match(partial.error || "", /TRANSPORT/);
-  assert.equal(getBleConnectionControls(partial).disconnectVisible, true);
+});
+
+test("reserved unsupported NUS does not degrade supported connections", () => {
+  const subscriptions = createBleSubscriptions("ready");
+  subscriptions.nus = {
+    status: "unsupported",
+    error: "当前协议保留未启用"
+  };
+  const connected = reduce(
+    createBleConnectionState(),
+    { type: "sync_connected", device },
+    { type: "subscriptions_resolved", subscriptions }
+  );
+
+  assert.equal(connected.phase, "connected");
+  assert.equal(connected.error, undefined);
+  assert.equal(connected.subscriptions.nus.status, "unsupported");
 });
 
 test("all subscriptions ready produces the fully connected phase", () => {
