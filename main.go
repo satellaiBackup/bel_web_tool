@@ -1,6 +1,10 @@
 package main
 
-import "localweb/internal/framework"
+import (
+	"net/http"
+
+	"localweb/internal/framework"
+)
 
 func main() {
 	rootDir, err := framework.DetermineRootDir()
@@ -9,7 +13,9 @@ func main() {
 	}
 
 	config := framework.LoadAppConfig(rootDir)
-	if err := framework.RunLocalWebApp(config, registerBusinessRoutes); err != nil {
+	if err := framework.RunLocalWebApp(config, func(mux *http.ServeMux) error {
+		return registerBusinessRoutes(mux, config)
+	}); err != nil {
 		framework.FatalStartupError("%v", err)
 	}
 }

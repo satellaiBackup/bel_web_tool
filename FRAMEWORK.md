@@ -76,8 +76,9 @@ import (
     "localweb/internal/business/yourbusiness"
 )
 
-func registerBusinessRoutes(mux *http.ServeMux) {
+func registerBusinessRoutes(mux *http.ServeMux) error {
     yourbusiness.RegisterRoutes(mux)
+    return nil
 }
 ```
 
@@ -103,7 +104,7 @@ func registerBusinessRoutes(mux *http.ServeMux) {
 框架层不依赖 BLE，也不依赖任何具体业务。业务只需要暴露一个：
 
 ```go
-func RegisterRoutes(mux *http.ServeMux)
+func RegisterRoutes(mux *http.ServeMux) error
 ```
 
 然后入口层把它传给框架即可。

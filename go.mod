@@ -2,9 +2,13 @@ module localweb
 
 go 1.23.8
 
-require tinygo.org/x/bluetooth v0.15.0
+require (
+	go.bug.st/serial v1.6.2
+	tinygo.org/x/bluetooth v0.15.0
+)
 
 require (
+	github.com/creack/goselect v0.1.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/saltosystems/winrt-go v0.0.0-20260317170058-9c2fec580d96 // indirect

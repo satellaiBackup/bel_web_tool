@@ -10,25 +10,34 @@ import (
 
 const appConfigFileName = "app.config.json"
 
+const defaultEsimHTTPSRelayMaxRequestBodyBytes int64 = 64 << 10
+
+type EsimHTTPSRelayConfig struct {
+	AllowedHosts        []string `json:"allowedHosts"`
+	CACertFiles         []string `json:"caCertFiles"`
+	MaxRequestBodyBytes int64    `json:"maxRequestBodyBytes"`
+}
+
 type AppConfig struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	ShortName       string `json:"shortName"`
-	Host            string `json:"host"`
-	Port            string `json:"port"`
-	StartPage       string `json:"startPage"`
-	StaticDir       string `json:"staticDir"`
-	ManifestPath    string `json:"manifestPath"`
-	IconPath        string `json:"iconPath"`
-	ProbePath       string `json:"probePath"`
-	ProbeHeader     string `json:"probeHeader"`
-	ProbeValue      string `json:"probeValue"`
-	WindowClassName string `json:"windowClassName"`
-	WindowTitle     string `json:"windowTitle"`
-	TrayTooltip     string `json:"trayTooltip"`
-	OpenMenuText    string `json:"openMenuText"`
-	ExitMenuText    string `json:"exitMenuText"`
-	AutoOpenBrowser bool   `json:"autoOpenBrowser"`
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	ShortName       string               `json:"shortName"`
+	Host            string               `json:"host"`
+	Port            string               `json:"port"`
+	StartPage       string               `json:"startPage"`
+	StaticDir       string               `json:"staticDir"`
+	ManifestPath    string               `json:"manifestPath"`
+	IconPath        string               `json:"iconPath"`
+	ProbePath       string               `json:"probePath"`
+	ProbeHeader     string               `json:"probeHeader"`
+	ProbeValue      string               `json:"probeValue"`
+	WindowClassName string               `json:"windowClassName"`
+	WindowTitle     string               `json:"windowTitle"`
+	TrayTooltip     string               `json:"trayTooltip"`
+	OpenMenuText    string               `json:"openMenuText"`
+	ExitMenuText    string               `json:"exitMenuText"`
+	AutoOpenBrowser bool                 `json:"autoOpenBrowser"`
+	EsimHTTPSRelay  EsimHTTPSRelayConfig `json:"esimHttpsRelay"`
 
 	RootDir string `json:"-"`
 }
@@ -74,7 +83,10 @@ func defaultAppConfig(rootDir string) AppConfig {
 		OpenMenuText:    "打开界面",
 		ExitMenuText:    "退出",
 		AutoOpenBrowser: true,
-		RootDir:         rootDir,
+		EsimHTTPSRelay: EsimHTTPSRelayConfig{
+			MaxRequestBodyBytes: defaultEsimHTTPSRelayMaxRequestBodyBytes,
+		},
+		RootDir: rootDir,
 	})
 }
 
@@ -132,6 +144,9 @@ func normalizeAppConfig(config AppConfig) AppConfig {
 	if config.ExitMenuText == "" {
 		config.ExitMenuText = defaults.ExitMenuText
 	}
+	if config.EsimHTTPSRelay.MaxRequestBodyBytes == 0 {
+		config.EsimHTTPSRelay.MaxRequestBodyBytes = defaults.EsimHTTPSRelay.MaxRequestBodyBytes
+	}
 
 	config.ProbePath = ensureLeadingSlash(config.ProbePath)
 	config.StartPage = strings.TrimLeft(config.StartPage, "/\\")
@@ -160,7 +175,10 @@ func defaultAppConfigWithoutNormalize(rootDir string) AppConfig {
 		OpenMenuText:    "Open",
 		ExitMenuText:    "Exit",
 		AutoOpenBrowser: true,
-		RootDir:         rootDir,
+		EsimHTTPSRelay: EsimHTTPSRelayConfig{
+			MaxRequestBodyBytes: defaultEsimHTTPSRelayMaxRequestBodyBytes,
+		},
+		RootDir: rootDir,
 	}
 }
 

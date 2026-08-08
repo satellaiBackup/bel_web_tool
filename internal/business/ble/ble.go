@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,8 +27,17 @@ const (
 	bleConnectionReadyDelay = 1200 * time.Millisecond
 )
 
+var errBLEGATTSessionUnavailable = errors.New("BLE GATT 会话失效")
+
 type bleManager struct {
 	adapter *bluetooth.Adapter
+
+	scanOperation         func(context.Context, string, time.Duration) ([]bleScanDevice, error)
+	connectOperation      func(string) (bleDeviceInfo, error)
+	disconnectOperation   func() error
+	writeOperation        func(string, string, []byte, *int) error
+	subscribeOperation    func(string, string) error
+	transportACKOperation func(bluetooth.DeviceCharacteristic, byte, byte) error
 
 	enableOnce sync.Once
 	enableErr  error
@@ -56,17 +67,35 @@ type bleConnection struct {
 	opMu        sync.Mutex
 	charCache   map[string]bluetooth.DeviceCharacteristic
 	notifyState map[string]bool
+	transport   *bleTransportState
+	disconnect  func() error
 }
 
 type bleEvent struct {
-	Type               string `json:"type"`
-	Timestamp          string `json:"timestamp"`
-	Address            string `json:"address,omitempty"`
-	Name               string `json:"name,omitempty"`
-	ServiceUUID        string `json:"serviceUuid,omitempty"`
-	CharacteristicUUID string `json:"characteristicUuid,omitempty"`
-	Data               string `json:"data,omitempty"`
-	Error              string `json:"error,omitempty"`
+	Type               string             `json:"type"`
+	Timestamp          string             `json:"timestamp"`
+	Address            string             `json:"address,omitempty"`
+	Name               string             `json:"name,omitempty"`
+	ServiceUUID        string             `json:"serviceUuid,omitempty"`
+	CharacteristicUUID string             `json:"characteristicUuid,omitempty"`
+	TransportChannel   *int               `json:"transportChannel,omitempty"`
+	TransportDebug     *bleTransportDebug `json:"transportDebug,omitempty"`
+	Data               string             `json:"data,omitempty"`
+	Error              string             `json:"error,omitempty"`
+}
+
+type bleTransportDebug struct {
+	Phase    string `json:"phase"`
+	Channel  int    `json:"channel"`
+	MsgID    int    `json:"msgId"`
+	Seq      int    `json:"seq"`
+	SOF      bool   `json:"sof"`
+	EOF      bool   `json:"eof"`
+	FrameLen int    `json:"frameLen"`
+	ChunkLen int    `json:"chunkLen,omitempty"`
+	Got      uint32 `json:"got,omitempty"`
+	Total    uint32 `json:"total,omitempty"`
+	Status   string `json:"status,omitempty"`
 }
 
 type bleScanDevice struct {
@@ -114,6 +143,7 @@ type bleWriteRequest struct {
 	ServiceUUID        string `json:"serviceUuid"`
 	CharacteristicUUID string `json:"characteristicUuid"`
 	Data               string `json:"data"`
+	TransportChannel   *int   `json:"transportChannel,omitempty"`
 }
 
 type bleSubscribeRequest struct {
@@ -159,19 +189,26 @@ func (m *bleManager) handleConnectEvent(device bluetooth.Device, connected bool)
 		Address:   strings.ToUpper(device.Address.String()),
 	}
 
+	shouldBroadcast := connected
 	m.mu.Lock()
 	current := m.connection
 	if !connected && current != nil && strings.EqualFold(current.address, event.Address) {
 		m.connection = nil
+		shouldBroadcast = true
 	}
 	m.mu.Unlock()
+	if !connected && shouldBroadcast {
+		current.closeTransport()
+	}
 
 	if connected {
 		event.Type = "connected"
 	} else {
 		event.Type = "disconnected"
 	}
-	m.broadcast(event)
+	if shouldBroadcast {
+		m.broadcast(event)
+	}
 }
 
 func (m *bleManager) handleScan(w http.ResponseWriter, r *http.Request) {
@@ -182,17 +219,21 @@ func (m *bleManager) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	timeout := defaultBLEScanTimeout
 	if raw := strings.TrimSpace(r.URL.Query().Get("timeout_ms")); raw != "" {
-		var requested int
-		if _, err := fmt.Sscanf(raw, "%d", &requested); err == nil && requested > 0 {
+		requested, err := strconv.Atoi(raw)
+		if err != nil || requested <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "timeout_ms must be a positive integer")
+			return
+		}
+		maxTimeoutMillis := int(maxBLEScanTimeout / time.Millisecond)
+		if requested > maxTimeoutMillis {
+			timeout = maxBLEScanTimeout
+		} else {
 			timeout = time.Duration(requested) * time.Millisecond
 		}
 	}
-	if timeout > maxBLEScanTimeout {
-		timeout = maxBLEScanTimeout
-	}
 
 	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
-	devices, err := m.scan(r.Context(), prefix, timeout)
+	devices, err := m.executeScan(r.Context(), prefix, timeout)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -213,7 +254,12 @@ func (m *bleManager) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := m.connect(strings.TrimSpace(req.Address))
+	address := strings.TrimSpace(req.Address)
+	if address == "" {
+		writeJSONError(w, http.StatusBadRequest, "address must not be empty")
+		return
+	}
+	device, err := m.executeConnect(address)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -228,7 +274,7 @@ func (m *bleManager) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := m.disconnect(); err != nil {
+	if err := m.executeDisconnect(); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -263,12 +309,15 @@ func (m *bleManager) handleWrite(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "data 不是有效的 base64")
 		return
 	}
+	log.Printf("[ble] write request service=%s char=%s len=%d transportChannel=%v", req.ServiceUUID, req.CharacteristicUUID, len(payload), req.TransportChannel)
 
-	if err := m.writeCharacteristic(req.ServiceUUID, req.CharacteristicUUID, payload); err != nil {
+	if err := m.executeWrite(req.ServiceUUID, req.CharacteristicUUID, payload, req.TransportChannel); err != nil {
+		log.Printf("[ble] write failed service=%s char=%s len=%d err=%v", req.ServiceUUID, req.CharacteristicUUID, len(payload), err)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	log.Printf("[ble] write ok service=%s char=%s len=%d", req.ServiceUUID, req.CharacteristicUUID, len(payload))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -284,12 +333,58 @@ func (m *bleManager) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := m.enableNotifications(req.ServiceUUID, req.CharacteristicUUID); err != nil {
+	if err := m.executeSubscribe(req.ServiceUUID, req.CharacteristicUUID); err != nil {
+		if isBLEAttributeNotFoundError(err) {
+			log.Printf("[ble] subscribe unsupported service=%s char=%s err=%v", req.ServiceUUID, req.CharacteristicUUID, err)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":          false,
+				"unsupported": true,
+				"error":       err.Error(),
+			})
+			return
+		}
+		log.Printf("[ble] subscribe failed service=%s char=%s err=%v", req.ServiceUUID, req.CharacteristicUUID, err)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	log.Printf("[ble] subscribe ok service=%s char=%s", req.ServiceUUID, req.CharacteristicUUID)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (m *bleManager) executeScan(ctx context.Context, prefix string, timeout time.Duration) ([]bleScanDevice, error) {
+	if m.scanOperation != nil {
+		return m.scanOperation(ctx, prefix, timeout)
+	}
+	return m.scan(ctx, prefix, timeout)
+}
+
+func (m *bleManager) executeConnect(address string) (bleDeviceInfo, error) {
+	if m.connectOperation != nil {
+		return m.connectOperation(address)
+	}
+	return m.connect(address)
+}
+
+func (m *bleManager) executeDisconnect() error {
+	if m.disconnectOperation != nil {
+		return m.disconnectOperation()
+	}
+	return m.disconnect()
+}
+
+func (m *bleManager) executeWrite(serviceUUID, characteristicUUID string, payload []byte, transportChannel *int) error {
+	if m.writeOperation != nil {
+		return m.writeOperation(serviceUUID, characteristicUUID, payload, transportChannel)
+	}
+	return m.writeCharacteristic(serviceUUID, characteristicUUID, payload, transportChannel)
+}
+
+func (m *bleManager) executeSubscribe(serviceUUID, characteristicUUID string) error {
+	if m.subscribeOperation != nil {
+		return m.subscribeOperation(serviceUUID, characteristicUUID)
+	}
+	return m.enableNotifications(serviceUUID, characteristicUUID)
 }
 
 func (m *bleManager) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -608,9 +703,11 @@ func (m *bleManager) connect(address string) (bleDeviceInfo, error) {
 		address:     info.Address,
 		name:        info.Name,
 		device:      device,
+		disconnect:  device.Disconnect,
 		connectedAt: time.Now(),
 		charCache:   make(map[string]bluetooth.DeviceCharacteristic),
 		notifyState: make(map[string]bool),
+		transport:   newBLETransportState(),
 	}
 	m.mu.Unlock()
 
@@ -627,14 +724,19 @@ func (m *bleManager) connect(address string) (bleDeviceInfo, error) {
 func (m *bleManager) disconnect() error {
 	m.mu.Lock()
 	conn := m.connection
+	m.mu.Unlock()
 	if conn == nil {
-		m.mu.Unlock()
 		return nil
 	}
-	m.connection = nil
-	m.mu.Unlock()
 
-	_ = conn.device.Disconnect()
+	if err := conn.disconnectDevice(); err != nil {
+		return fmt.Errorf("断开设备失败: %w", err)
+	}
+	if !m.clearConnectionIfCurrent(conn) {
+		return nil
+	}
+
+	conn.closeTransport()
 	m.broadcast(bleEvent{
 		Type:      "disconnected",
 		Timestamp: time.Now().Format(time.RFC3339Nano),
@@ -642,6 +744,51 @@ func (m *bleManager) disconnect() error {
 		Name:      conn.name,
 	})
 	return nil
+}
+
+func (m *bleManager) clearConnectionIfCurrent(conn *bleConnection) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if conn == nil || m.connection != conn {
+		return false
+	}
+	m.connection = nil
+	return true
+}
+
+func (m *bleManager) invalidateConnection(conn *bleConnection, cause error) {
+	if !m.clearConnectionIfCurrent(conn) {
+		return
+	}
+
+	log.Printf("[ble] invalidating stale GATT connection address=%s err=%v", conn.address, cause)
+	m.broadcast(bleEvent{
+		Type:      "disconnected",
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Address:   conn.address,
+		Name:      conn.name,
+		Error:     cause.Error(),
+	})
+	conn.closeTransport()
+	if err := conn.disconnectDevice(); err != nil {
+		log.Printf("[ble] stale GATT disconnect failed address=%s err=%v", conn.address, err)
+	}
+}
+
+func (c *bleConnection) closeTransport() {
+	if c != nil && c.transport != nil {
+		c.transport.close()
+	}
+}
+
+func (c *bleConnection) disconnectDevice() error {
+	if c == nil {
+		return nil
+	}
+	if c.disconnect != nil {
+		return c.disconnect()
+	}
+	return c.device.Disconnect()
 }
 
 func (m *bleManager) state() bleStateResponse {
@@ -659,31 +806,8 @@ func (m *bleManager) state() bleStateResponse {
 	}
 }
 
-func (m *bleManager) writeCharacteristic(serviceUUID, characteristicUUID string, payload []byte) error {
-	conn, err := m.requireConnection()
-	if err != nil {
-		return err
-	}
-	if err := m.waitForConnectionReady(conn); err != nil {
-		return err
-	}
-
-	conn.opMu.Lock()
-	defer conn.opMu.Unlock()
-
-	char, key, err := m.getCharacteristicLocked(conn, serviceUUID, characteristicUUID)
-	if err != nil {
-		return err
-	}
-
-	if _, err := char.WriteWithoutResponse(payload); err == nil {
-		return nil
-	}
-	if _, err := char.Write(payload); err == nil {
-		return nil
-	} else {
-		return fmt.Errorf("写入特征失败 %s: %w", key, err)
-	}
+func (m *bleManager) writeCharacteristic(serviceUUID, characteristicUUID string, payload []byte, transportChannel *int) error {
+	return m.writeCharacteristicAuto(serviceUUID, characteristicUUID, payload, transportChannel)
 }
 
 func (m *bleManager) enableNotifications(serviceUUID, characteristicUUID string) error {
@@ -696,13 +820,21 @@ func (m *bleManager) enableNotifications(serviceUUID, characteristicUUID string)
 	}
 
 	conn.opMu.Lock()
-	defer conn.opMu.Unlock()
+	err = m.enableNotificationsLocked(conn, serviceUUID, characteristicUUID)
+	conn.opMu.Unlock()
+	if errors.Is(err, errBLEGATTSessionUnavailable) {
+		m.invalidateConnection(conn, err)
+	}
+	return err
+}
 
+func (m *bleManager) enableNotificationsLocked(conn *bleConnection, serviceUUID, characteristicUUID string) error {
 	char, key, err := m.getCharacteristicLocked(conn, serviceUUID, characteristicUUID)
 	if err != nil {
 		return err
 	}
 	if conn.notifyState[key] {
+		log.Printf("[ble] notify already enabled key=%s", key)
 		return nil
 	}
 
@@ -717,6 +849,12 @@ func (m *bleManager) enableNotifications(serviceUUID, characteristicUUID string)
 
 	if err := char.EnableNotifications(func(buf []byte) {
 		copyBuf := append([]byte(nil), buf...)
+		if normalizedServiceUUID == uuidSvcSatellai && normalizedCharUUID == uuidCharTP {
+			if m.handleTransportNotification(conn, char, copyBuf) {
+				return
+			}
+		}
+		log.Printf("[ble] notify rx service=%s char=%s len=%d", normalizedServiceUUID, normalizedCharUUID, len(copyBuf))
 		m.broadcast(bleEvent{
 			Type:               "notification",
 			Timestamp:          time.Now().Format(time.RFC3339Nano),
@@ -727,10 +865,15 @@ func (m *bleManager) enableNotifications(serviceUUID, characteristicUUID string)
 			Data:               base64.StdEncoding.EncodeToString(copyBuf),
 		})
 	}); err != nil {
-		return fmt.Errorf("开启通知失败 %s: %w", key, err)
+		return newBLEGATTSessionError(fmt.Sprintf("开启通知失败 %s", key), err)
 	}
 
 	conn.notifyState[key] = true
+	log.Printf("[ble] notify enabled key=%s service=%s char=%s", key, normalizedServiceUUID, normalizedCharUUID)
+	if normalizedServiceUUID == uuidSvcSatellai && normalizedCharUUID == uuidCharTP {
+		log.Printf("[ble] transport ccc subscribed char=%s", normalizedCharUUID)
+	}
+
 	return nil
 }
 
@@ -788,7 +931,10 @@ func (m *bleManager) getCharacteristicLocked(conn *bleConnection, serviceUUID, c
 
 	services, err := discoverServicesWithRetry(conn.device, []bluetooth.UUID{serviceID})
 	if err != nil {
-		return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("发现服务失败: %w", err)
+		if isBLEAttributeNotFoundError(err) {
+			return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("未找到服务 %s: %w", normalizedServiceUUID, err)
+		}
+		return bluetooth.DeviceCharacteristic{}, key, newBLEGATTSessionError("发现服务失败", err)
 	}
 	if len(services) == 0 {
 		return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("未找到服务 %s", normalizedServiceUUID)
@@ -796,7 +942,10 @@ func (m *bleManager) getCharacteristicLocked(conn *bleConnection, serviceUUID, c
 
 	chars, err := discoverCharacteristicsWithRetry(services[0], []bluetooth.UUID{charID})
 	if err != nil {
-		return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("发现特征失败: %w", err)
+		if isBLEAttributeNotFoundError(err) {
+			return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("未找到特征 %s: %w", normalizedCharUUID, err)
+		}
+		return bluetooth.DeviceCharacteristic{}, key, newBLEGATTSessionError("发现特征失败", err)
 	}
 	if len(chars) == 0 {
 		return bluetooth.DeviceCharacteristic{}, key, fmt.Errorf("未找到特征 %s", normalizedCharUUID)
@@ -804,6 +953,19 @@ func (m *bleManager) getCharacteristicLocked(conn *bleConnection, serviceUUID, c
 
 	conn.charCache[key] = chars[0]
 	return chars[0], key, nil
+}
+
+func newBLEGATTSessionError(operation string, err error) error {
+	return fmt.Errorf("%w: %s: %v", errBLEGATTSessionUnavailable, operation, err)
+}
+
+func isBLEAttributeNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "did not find all requested service") ||
+		strings.Contains(message, "did not find all requested characteristic")
 }
 
 func discoverServicesWithRetry(device bluetooth.Device, filter []bluetooth.UUID) ([]bluetooth.DeviceService, error) {
@@ -814,6 +976,9 @@ func discoverServicesWithRetry(device bluetooth.Device, filter []bluetooth.UUID)
 			return services, nil
 		}
 		lastErr = err
+		if isBLEAttributeNotFoundError(err) {
+			break
+		}
 		if attempt < bleDiscoveryAttempts-1 {
 			time.Sleep(bleDiscoveryBackoff * time.Duration(attempt+1))
 		}
@@ -829,6 +994,9 @@ func discoverCharacteristicsWithRetry(service bluetooth.DeviceService, filter []
 			return chars, nil
 		}
 		lastErr = err
+		if isBLEAttributeNotFoundError(err) {
+			break
+		}
 		if attempt < bleDiscoveryAttempts-1 {
 			time.Sleep(bleDiscoveryBackoff * time.Duration(attempt+1))
 		}

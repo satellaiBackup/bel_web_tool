@@ -16,5 +16,10 @@
   "trayTooltip": "BLE 网页调试助手",
   "openMenuText": "打开界面",
   "exitMenuText": "退出",
-  "autoOpenBrowser": true
+  "autoOpenBrowser": true,
+  "esimHttpsRelay": {
+    "allowedHosts": [],
+    "caCertFiles": [],
+    "maxRequestBodyBytes": 65536
+  }
 }

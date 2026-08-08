@@ -1,390 +1,451 @@
-﻿<div class="container mx-auto">
-        <h1 class="text-3xl font-bold mb-2 text-blue-600">蓝牙调试助手</h1>
-        <p class="mb-4 text-sm text-gray-600">Copyright SATELLAI 2024 (要求版本<b class="text-red-500">v8.1.0</b>以上)</p>
-        
-        <div class="mb-6 space-y-2">
-            <div class="flex flex-wrap gap-2 items-center">
-            <input type="text" id="nameFilter" placeholder="设备名称前缀 (例如: SATELLAI)" class="min-w-[200px] sm:min-w-[320px] flex-grow">
-            <button id="scanDevices" class="cmd-button">扫描设备</button>
-            <select id="deviceSelect" class="min-w-[260px] sm:min-w-[420px] flex-grow bg-white">
-                <option value="">请先扫描设备</option>
+<div class="ble-tool-admin">
+  <aside class="admin-sidebar">
+    <div class="admin-brand">
+      <div class="admin-brand-mark">BLE</div>
+      <div>
+        <h1>蓝牙调试助手</h1>
+        <p>连接后按设备实际通道能力启用调试功能</p>
+      </div>
+    </div>
+
+    <nav class="admin-menu" aria-label="功能导航">
+      <a href="#connectionSection">
+        <span>连接总览</span>
+        <small>扫描设备 / 建立连接</small>
+      </a>
+      <a href="#maintenanceSection">
+        <span>设备维护</span>
+        <small>固件、证书、文件、产测</small>
+      </a>
+      <a href="#commandConsoleSection">
+        <span>命令调试</span>
+        <small>NUS、APP、AT、事件日志</small>
+      </a>
+      <a href="#appAdvancedCommandsSection">
+        <span>业务能力</span>
+        <small>卫星、围栏、Wi-Fi 信标</small>
+      </a>
+    </nav>
+  </aside>
+
+  <main class="admin-main">
+    <section id="connectionSection" class="admin-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Device Console</p>
+        <h2>设备连接与调试工作台</h2>
+        <p>把连接、维护、命令、业务能力按父子级组织，保留原有 BLE 调试流程。</p>
+      </div>
+
+      <div class="connection-panel">
+        <div class="connection-status">
+          <span class="status-dot"></span>
+          <label id="status">待连接</label>
+        </div>
+        <div class="connection-controls">
+          <label class="form-field">
+            <span>名称前缀</span>
+            <input type="text" id="nameFilter" placeholder="设备名称前缀，例如 SATELLAI" class="admin-input">
+          </label>
+          <label class="form-field form-field-wide">
+            <span>设备列表</span>
+            <select id="deviceSelect" class="admin-input">
+              <option value="">请先扫描设备</option>
             </select>
+          </label>
+          <div class="action-stack">
+            <button id="scanDevices" class="cmd-button">扫描设备</button>
             <button id="scanAndConnect" class="cmd-button">连接选中设备</button>
-            <button id="disconnect" class="cmd-button bg-red-500 hover:bg-red-700" hidden>断开连接</button>
-            <label id="status" class="text-gray-500 font-semibold">待连接</label>
+            <button id="disconnect" class="cmd-button danger" hidden>断开连接</button>
+          </div>
+        </div>
+        <div id="deviceSummary" class="connection-summary">请先扫描设备，列表会显示名称、MAC 和 RSSI。</div>
+      </div>
+    </section>
+
+    <section id="maintenanceSection" class="admin-section">
+      <div class="section-heading">
+        <p class="eyebrow">Maintenance</p>
+        <h2>设备维护</h2>
+        <span>固件升级、证书写入、文件上传和基础产测。</span>
+      </div>
+
+      <div class="admin-grid two-columns">
+        <article class="admin-card">
+          <div class="card-heading">
+            <div>
+              <h3>文件与升级</h3>
+              <p>固件、证书、通用文件统一放在这里。</p>
             </div>
-            <div id="deviceSummary" class="text-xs text-gray-600">请先扫描设备，列表会显示名称、MAC 和 RSSI。</div>
+          </div>
+
+          <div
+            class="form-list"
+            data-ble-requires="dfu"
+            data-safety-risk="destructive"
+          >
+            <div class="form-row">
+              <label for="fwfile">固件升级</label>
+              <input type="file" id="fwfile" class="cmd admin-input file-input" disabled>
+              <button class="cmd cmd-button" disabled onclick="chooseFile(document.getElementById('fwfile'))">开始升级</button>
+            </div>
+            <div class="form-row">
+              <label for="certfile">写入证书</label>
+              <input type="file" id="certfile" class="cmd admin-input file-input" disabled>
+              <button class="cmd cmd-button" disabled onclick="sendCert(document.getElementById('certfile'))">写入证书</button>
+            </div>
+            <div class="form-row stacked">
+              <label for="genericfile">上传文件</label>
+              <div class="inline-controls">
+                <input type="file" id="genericfile" class="cmd admin-input file-input" disabled>
+                <input type="text" id="genericfilePath" placeholder="可选路径，例如 /logs/" class="cmd cmd-input admin-input" disabled>
+                <button class="cmd cmd-button" disabled onclick="sendFile(document.getElementById('genericfile'))">上传文件</button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="admin-card">
+          <div class="card-heading">
+            <div>
+              <h3>出厂测试</h3>
+              <p>常用产测 AT 命令和响应结果。</p>
+            </div>
+          </div>
+
+          <div class="command-list compact">
+            <div class="command-row">
+              <button id="AT+FLASHRWTEST?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">外部 Flash 测试</button>
+              <label for="AT+FLASHRWTEST?" class="rsp response-text"></label>
+            </div>
+            <div class="command-row">
+              <button id="AT+CHARGER?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">充电芯片状态</button>
+              <label for="AT+CHARGER?" class="rsp response-text"></label>
+            </div>
+            <div class="command-row">
+              <button id="AT+LS?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">查询文件目录</button>
+              <label for="AT+LS?" class="rsp response-text"></label>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="commandConsoleSection" class="admin-section">
+      <div class="section-heading">
+        <p class="eyebrow">Command Center</p>
+        <h2>命令调试</h2>
+        <span>NUS 自定义命令、APP 快捷命令和事件消息。</span>
+      </div>
+
+      <div class="admin-grid">
+        <article class="admin-card">
+          <div class="card-heading">
+            <div>
+              <h3>自定义命令</h3>
+              <p>按回车发送，响应会写入下方日志。</p>
+            </div>
+          </div>
+
+          <div class="form-list">
+            <label class="form-field">
+              <span>NUS 命令</span>
+              <input type="text" id="customCmd" placeholder="输入自定义命令并按回车" class="cmd cmd-input admin-input" disabled>
+            </label>
+            <label class="switch-line">
+              <input type="checkbox" id="clearOnSent" checked class="cmd" disabled>
+              <span>自动添加 \r\n</span>
+            </label>
+            <label class="form-field">
+              <span>APP 命令</span>
+              <input type="text" id="appCmd" placeholder="输入 APP 命令并按回车" class="cmd cmd-input admin-input" disabled>
+            </label>
+            <div>
+              <div class="log-title">命令响应</div>
+              <div id="customCmdRsp" class="log-panel small"></div>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <section id="eventMessagesSection" class="admin-card full-width">
+        <div class="card-heading split">
+          <div>
+            <h3>事件消息</h3>
+            <p>设备上报的 <code>{"e":"xxxxx"}</code> 事件会集中显示在这里。</p>
+          </div>
+          <button id="clearEventMessages" class="cmd-button secondary" onclick="clearEventMessages()">清空消息</button>
+        </div>
+        <div id="eventMessagesLog" class="log-panel medium"></div>
+      </section>
+    </section>
+
+    <section id="appAdvancedCommandsSection" class="admin-section">
+      <div class="section-heading">
+        <p class="eyebrow">Business Modules</p>
+        <h2>业务能力</h2>
+        <span>APP 快捷命令、卫星短信、围栏配置和 Wi-Fi 信标。</span>
+      </div>
+
+      <article class="admin-card">
+        <div class="card-heading">
+          <div>
+            <h3>APP 快捷命令</h3>
+            <p>高频 APP JSON 命令集中入口。</p>
+          </div>
+        </div>
+        <div class="button-grid">
+          <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;v\&quot;}')">查询版本号</button>
+          <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;b\&quot;}')">查询电量</button>
+          <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;f\&quot;}')">查围栏状态</button>
+          <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;f1\&quot;}')">开启围栏</button>
+          <button class="cmd cmd-button secondary" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;f0\&quot;}')">关闭围栏</button>
+          <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;fe\&quot;}')">查激活围栏</button>
+          <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;fl\&quot;}')">查围栏列表</button>
+          <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;st\&quot;}')">查询时间</button>
+          <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;dir\&quot;}')">片内查询目录</button>
+          <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;ss\&quot;}')">查询剩余空间</button>
+          <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;di\&quot;}')">查询设备信息</button>
+          <button class="cmd cmd-button warning" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sys.reboot\&quot;}')">重启设备</button>
+          <button class="cmd cmd-button warning" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sys.poweroff\&quot;}')">船运模式</button>
+          <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;?\&quot;}')">Info Dump</button>
+          <button class="cmd cmd-button danger" data-safety-risk="destructive" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sec.format\&quot;}')">格式化 Flash</button>
+          <button class="cmd cmd-button danger" data-safety-risk="destructive" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;settings.format\&quot;}')">重置 Setting</button>
+        </div>
+        <div class="log-title">APP 命令响应</div>
+        <div id="appCmdRspLog" class="log-panel medium"></div>
+      </article>
+
+      <div class="admin-grid two-columns">
+        <article id="ntnSmsSection" class="admin-card">
+          <div class="card-heading split">
+            <div>
+              <h3>卫星短信 / NTN</h3>
+              <p>模式切换、状态查询、环境配置和短信收发。</p>
+            </div>
+            <div id="ntnMessage" class="message-line"></div>
+          </div>
+
+          <div class="button-group">
+            <button class="cmd cmd-button" disabled onclick="handleNtnEnterOnlyMode()">进入仅卫星模式</button>
+            <button class="cmd cmd-button secondary" disabled onclick="handleNtnExitOnlyMode()">退出到默认模式</button>
+            <button class="cmd cmd-button" disabled onclick="handleNtnStatus()">查询 NTN 状态</button>
+          </div>
+
+          <div class="sub-card">
+            <div class="metric-header">
+              <div>
+                <strong>卫星调试环境模式</strong>
+                <span>生产环境 IP / 调试环境 IP</span>
+              </div>
+              <div id="ntnEnvValue" class="metric-value">-</div>
+            </div>
+            <div class="inline-controls">
+              <button class="cmd cmd-button" disabled onclick="handleNtnEnvQuery()">查询环境</button>
+              <select id="ntnEnvSelect" class="cmd cmd-input admin-input narrow" disabled>
+                <option value="0">生产环境 IP</option>
+                <option value="1">调试环境 IP</option>
+              </select>
+              <button class="cmd cmd-button" disabled onclick="handleNtnEnvSet()">设置环境</button>
+            </div>
+          </div>
+
+          <div id="ntnStatusDisplay" class="metric-grid">
+            <div class="metric-card">
+              <span>PM Mode</span>
+              <strong id="ntnModeValue">-</strong>
+            </div>
+            <div class="metric-card">
+              <span>NTN State</span>
+              <strong id="ntnStateValue">-</strong>
+            </div>
+            <div class="metric-card">
+              <span>Ready</span>
+              <strong id="ntnReadyValue">-</strong>
+            </div>
+            <div class="metric-card">
+              <span>Last Error</span>
+              <strong id="ntnErrValue">-</strong>
+            </div>
+          </div>
+
+          <div class="sms-composer">
+            <input type="number" id="ntnSmsId" class="cmd cmd-input admin-input narrow" min="0" max="65535" step="1" value="123" placeholder="消息 ID" disabled>
+            <div class="textarea-wrap">
+              <textarea id="ntnSmsText" class="cmd cmd-input cmd-textarea admin-input" rows="3" maxlength="140" placeholder="卫星短信文本，UTF-8 最大 140 字节" disabled></textarea>
+              <span><b id="ntnSmsByteCount">0</b>/140 bytes</span>
+            </div>
+            <button class="cmd cmd-button" disabled onclick="handleNtnSmsSend()">发送短信</button>
+          </div>
+
+          <div class="log-title">NTN 短信对话</div>
+          <div id="ntnConversationLog" class="log-panel chat"></div>
+
+          <div class="admin-grid two-columns slim-gap">
+            <div>
+              <div class="log-title">NTN 命令日志</div>
+              <div id="ntnCmdRspLog" class="log-panel small"></div>
+            </div>
+            <div>
+              <div class="log-title">NTN 事件日志</div>
+              <div id="ntnEventLog" class="log-panel small"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="admin-card">
+          <div class="card-heading">
+            <div>
+              <h3>围栏管理</h3>
+              <p>围栏激活、禁用、添加、删除和调试事件。</p>
+            </div>
+          </div>
+
+          <div class="sub-card">
+            <h4>激活 / 禁用围栏</h4>
+            <div class="inline-controls">
+              <button class="cmd cmd-button" disabled onclick="handleAppActivateFence()">激活围栏</button>
+              <input type="text" id="app_fe1_param_fid" placeholder="围栏 ID，例如 f-1234" class="cmd cmd-input admin-input" disabled>
+            </div>
+            <div class="inline-controls">
+              <button class="cmd cmd-button secondary" disabled onclick="handleAppDeactivateFence()">禁用围栏</button>
+              <input type="text" id="app_fe0_param_fid" placeholder="围栏 ID，例如 f-1234" class="cmd cmd-input admin-input" disabled>
+            </div>
+          </div>
+
+          <div class="sub-card">
+            <h4>围栏编辑器</h4>
+            <button id="openEditorBtn" class="cmd cmd-button" disabled onclick="openFenceEditor()">打开围栏编辑器</button>
+            <div id="dataList" class="data-preview">
+              <p>尚未接收到数据。请打开编辑器并提交一个围栏。</p>
+            </div>
+          </div>
+
+          <div class="sub-card">
+            <h4>删除围栏</h4>
+            <div class="inline-controls">
+              <button class="cmd cmd-button danger" disabled onclick="handleAppDeleteFence()">删除围栏</button>
+              <input type="text" id="app_fd_param_fids" placeholder="围栏 ID 列表，逗号分隔，例如 f-1,f-2" class="cmd cmd-input admin-input" disabled>
+            </div>
+          </div>
+
+          <div class="sub-card">
+            <h4>围栏参数</h4>
+            <div class="inline-controls">
+              <input type="number" id="app_sfp1_padding" step="any" placeholder="Padding" class="cmd cmd-input admin-input narrow" disabled>
+              <input type="number" id="app_sfp1_margin" step="any" placeholder="Margin" class="cmd cmd-input admin-input narrow" disabled>
+              <button class="cmd cmd-button" disabled onclick="handleAppSetFenceParams()">设置参数</button>
+            </div>
+          </div>
+
+          <div class="sub-card">
+            <h4>围栏事件调试</h4>
+            <div class="inline-controls">
+              <input type="number" id="app_debug_event_type" min="1" max="6" placeholder="Type 1-6" class="cmd cmd-input admin-input narrow" disabled>
+              <input type="number" id="app_debug_event_lat" step="any" placeholder="Latitude" class="cmd cmd-input admin-input" disabled>
+              <input type="number" id="app_debug_event_lng" step="any" placeholder="Longitude" class="cmd cmd-input admin-input" disabled>
+              <button class="cmd cmd-button" disabled onclick="handleAppDebugEventGnss()">发送调试事件</button>
+            </div>
+            <p class="hint">Type: 1 lost, 2 fix, 3 secured, 4 approaching, 5 breach, 6 escaped</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="wifiCommandsSection" class="admin-section">
+      <div class="section-heading">
+        <p class="eyebrow">Wi-Fi Beacon</p>
+        <h2>Wi-Fi 信标工具</h2>
+        <span>配置扫描策略，维护信标列表，并查看扫描结果。</span>
+      </div>
+
+      <article class="admin-card">
+        <div class="card-heading split">
+          <div>
+            <h3>信标配置</h3>
+            <p>扫描频率和丢失阈值会用于信标丢失判断。</p>
+          </div>
+          <div id="wifiMessage" class="message-line"></div>
         </div>
 
-        <details class="mb-6 bg-white shadow-md rounded-lg p-4">
-            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">上传文件&更新固件</summary>
-            <div class="overflow-x-auto mt-4">
-                <table class="w-full border-collapse">
-                    <tbody>
-                        <div class="space-y-4 mb-6">
-                            <div class="flex items-center gap-2">
-                                <label for="fwfile" class="font-medium text-gray-700">固件升级:</label>
-                                <input type="file" id="fwfile" class="cmd" disabled>
-                                <button class="cmd cmd-button" disabled onclick="chooseFile(document.getElementById('fwfile'))">开始升级</button>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <label for="certfile" class="font-medium text-gray-700">写入证书:</label>
-                                <input type="file" id="certfile" class="cmd" disabled>
-                                <button class="cmd cmd-button" disabled onclick="sendCert(document.getElementById('certfile'))">写入证书</button>
-                            </div>
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <label for="genericfile" class="font-medium text-gray-700">上传文件:</label>
-                                <input type="file" id="genericfile" class="cmd" disabled>
-                                <input type="text" id="genericfilePath" placeholder="可选路径 (例如: /logs/)" class="cmd min-w-[200px] sm:min-w-[320px] flex-grow" disabled>
-                                <button class="cmd cmd-button" disabled onclick="sendFile(document.getElementById('genericfile'))">上传文件</button>
-                            </div>
-                        </div>
-                    </tbody>
-                </table>
+        <div class="admin-grid two-columns">
+          <div class="sub-card">
+            <h4>参数</h4>
+            <div class="inline-controls">
+              <label class="mini-field" for="wifiScanFrequency">扫描频率</label>
+              <input type="number" id="wifiScanFrequency" class="cmd cmd-input admin-input narrow" placeholder="60" min="30" value="60" disabled title="最小30秒">
+              <span class="unit">秒</span>
+              <label class="mini-field" for="wifiLostCount">丢失阈值</label>
+              <input type="number" id="wifiLostCount" class="cmd cmd-input admin-input narrow" placeholder="1" min="1" value="1" disabled title="至少1次">
+              <span class="unit">次</span>
             </div>
-        </details>
+            <p class="hint">f 为扫描频率，l 为连续未检测到信标的次数阈值。</p>
+          </div>
 
-        <details class="mb-6 bg-white shadow-md rounded-lg p-4">
-            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">出厂测试</summary>
-            <div class="overflow-x-auto mt-4">
-                <table class="w-full border-collapse">
-                    <thead class="bg-gray-200">
-                         <tr>
-                            <th class="text-left p-3 border-b border-gray-300 min-w-[250px] md:min-w-[300px]">命令</th>
-                            <th class="text-left p-3 border-b border-gray-300 min-w-[200px]">响应</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr class="hover:bg-gray-100">
-                            <td class="p-3 border-b border-gray-300"><button id="AT+FLASHRWTEST?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">外部Flash测试</button></td>
-                            <td class="p-3 border-b border-gray-300"><label for="AT+FLASHRWTEST?" class="rsp"></label></td>
-                        </tr>
-                        <tr class="hover:bg-gray-100">
-                            <td class="p-3 border-b border-gray-300"><button id="AT+CHARGER?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">充电芯片状态</button></td>
-                            <td class="p-3 border-b border-gray-300"><label for="AT+CHARGER?" class="rsp"></label></td>
-                        </tr>
-                        <tr class="hover:bg-gray-100">
-                            <td class="p-3 border-b border-gray-300"><button id="AT+LS?" class="cmd cmd-button" disabled onclick="sendCmdAndWaitForOK(this)">查询文件目录</button></td>
-                            <td class="p-3 border-b border-gray-300"><label for="AT+LS?" class="rsp"></label></td>
-                        </tr>
-                    </tbody>
-                </table>
+          <div class="sub-card">
+            <h4>开关</h4>
+            <div class="button-group">
+              <button class="cmd cmd-button" disabled onclick="handleWifiEnable()">开启信标</button>
+              <button class="cmd cmd-button secondary" disabled onclick="handleWifiDisable()">关闭信标</button>
             </div>
-        </details>
+          </div>
+        </div>
 
-        <details class="mb-6 bg-white shadow-md rounded-lg p-4">
-            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">自定义命令</summary>
-            <div class="overflow-x-auto mt-4">
-                <table class="w-full border-collapse">
-                    <tbody>
-                        <div class="mb-4">
-                            <label for="customCmd" class="block font-medium text-gray-700 mb-1">自定义命令</label>
-                            <div class="flex items-center gap-2">
-                                <input type="text" id="customCmd" placeholder="输入自定义命令并按回车" class="cmd min-w-[200px] sm:min-w-[320px] flex-grow" disabled>
-                                <input type="checkbox" id="clearOnSent" checked class="cmd form-checkbox h-5 w-5 text-blue-600 rounded" disabled>
-                                <label for="clearOnSent" class="text-sm text-gray-600">自动添加\r\n</label>
-                            </div>
-                        </div>
-                        
-                        <div class="mb-4">
-                            <label for="appCmd" class="block font-medium text-gray-700 mb-1">发送app命令</label>
-                            <input type="text" id="appCmd" placeholder="输入app命令并按回车" class="cmd min-w-[200px] sm:min-w-[320px] w-full" disabled>
-                        </div>
-                        
-                        <div>
-                            <label class="block font-medium text-gray-700 mb-1">命令响应:</label>
-                            <div id="customCmdRsp" class="block max-h-[150px] h-[150px] overflow-y-auto bg-gray-100 p-2 border border-gray-300 rounded-md text-sm"></div>
-                        </div>
-                    </tbody>
-                </table>
+        <div class="admin-grid two-columns">
+          <div class="sub-card">
+            <h4>添加 Wi-Fi 信标</h4>
+            <div class="form-list">
+              <div class="inline-controls">
+                <input type="text" id="wifiAddSsid" class="cmd cmd-input admin-input" placeholder="SSID" disabled>
+                <input type="text" id="wifiAddMac" class="cmd cmd-input admin-input" placeholder="MAC 地址，例如 12:34:56:78:9A:BC" disabled>
+                <button class="cmd cmd-button" disabled onclick="handleWifiAddTag()">添加</button>
+              </div>
+              <div class="inline-controls">
+                <input type="number" id="wifiAddLat" class="cmd cmd-input admin-input" min="-90" max="90" step="0.000001" placeholder="纬度 lat，可选" disabled>
+                <input type="number" id="wifiAddLng" class="cmd cmd-input admin-input" min="-180" max="180" step="0.000001" placeholder="经度 lng，可选" disabled>
+                <button class="cmd cmd-button secondary" disabled onclick="openWifiLocationPicker()">地图选点</button>
+                <button class="cmd cmd-button secondary" disabled onclick="clearWifiLocation()">清除位置</button>
+              </div>
+              <div id="wifiLocationHint" class="hint">经纬度为可选项；留空时只提交 SSID 和 MAC。</div>
+              <iframe id="wifiLocationPickerFrame" src="about:blank" title="Wi-Fi 信标地图选点" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; border:none; z-index:1200;"></iframe>
             </div>
-        </details>
+          </div>
 
-        </details> <details id="appAdvancedCommandsSection" class="mb-6 bg-white shadow-md rounded-lg p-4">
-            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">App 高级命令</summary>
-            <div class="overflow-x-auto mt-4 space-y-4">
-                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;v\&quot;}')">查询版本号</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;b\&quot;}')">查询电量</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;f\&quot;}')">查围栏状态</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;f1\&quot;}')">开启围栏</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;f0\&quot;}')">关闭围栏</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;fe\&quot;}')">查激活围栏</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;fl\&quot;}')">查围栏列表</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;st\&quot;}')">查询时间</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;dir\&quot;}')">片内查询目录</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;ss\&quot;}')">查询剩余空间</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;di\&quot;}')">查询设备信息</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sys.reboot\&quot;}')">重启设备</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sys.poweroff\&quot;}')">船运模式</button>
-                    <button class="cmd cmd-button" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;?\&quot;}')">Info Dump</button>
-                    <button class="cmd cmd-button bg-orange-500 hover:bg-orange-700" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;sec.format\&quot;}')">格式化Flash</button>
-                    <button class="cmd cmd-button bg-orange-500 hover:bg-orange-700" disabled onclick="sendAppCommandViaBle('{\&quot;c\&quot;:\&quot;settings.format\&quot;}')">重置Setting</button>
-                </div>
-
-                <div>
-                    <label class="block font-medium text-gray-700 mb-1">App命令响应 (SATELLAI服务):</label>
-                    <div id="appCmdRspLog" class="block max-h-[200px] h-[200px] overflow-y-auto bg-gray-100 p-2 border border-gray-300 rounded-md text-sm font-mono"></div>
-                </div>
-
-                <hr>
-
-                <div id="ntnSmsSection" class="p-4 border rounded-lg shadow-sm bg-white space-y-4">
-                    <div class="flex flex-wrap items-center justify-between gap-3">
-                        <h4 class="font-semibold text-gray-800">BLE 卫星短信 / NTN</h4>
-                        <div id="ntnMessage" class="text-sm text-gray-600"></div>
-                    </div>
-
-                    <div class="flex flex-wrap gap-2">
-                        <button class="cmd cmd-button" disabled onclick="handleNtnEnterOnlyMode()">进入仅卫星模式</button>
-                        <button class="cmd cmd-button bg-gray-500 hover:bg-gray-600" disabled onclick="handleNtnExitOnlyMode()">退出到默认模式</button>
-                        <button class="cmd cmd-button" disabled onclick="handleNtnStatus()">查询 NTN 状态</button>
-                    </div>
-
-                    <div class="p-3 border rounded-md bg-gray-50 space-y-2">
-                        <div class="flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                                <div class="font-medium text-gray-700">卫星调试环境模式</div>
-                                <div class="text-xs text-gray-500">控制卫星上报使用生产环境 IP 或调试环境 IP</div>
-                            </div>
-                            <div id="ntnEnvValue" class="text-sm font-semibold text-gray-700">-</div>
-                        </div>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <button class="cmd cmd-button" disabled onclick="handleNtnEnvQuery()">查询环境</button>
-                            <select id="ntnEnvSelect" class="cmd bg-white min-w-[180px]" disabled>
-                                <option value="0">生产环境 IP</option>
-                                <option value="1">调试环境 IP</option>
-                            </select>
-                            <button class="cmd cmd-button" disabled onclick="handleNtnEnvSet()">设置环境</button>
-                        </div>
-                    </div>
-
-                    <div id="ntnStatusDisplay" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                        <div class="bg-gray-50 border rounded-md p-3">
-                            <div class="text-xs text-gray-500">PM Mode</div>
-                            <div id="ntnModeValue" class="font-semibold text-gray-800">-</div>
-                        </div>
-                        <div class="bg-gray-50 border rounded-md p-3">
-                            <div class="text-xs text-gray-500">NTN State</div>
-                            <div id="ntnStateValue" class="font-semibold text-gray-800">-</div>
-                        </div>
-                        <div class="bg-gray-50 border rounded-md p-3">
-                            <div class="text-xs text-gray-500">Ready</div>
-                            <div id="ntnReadyValue" class="font-semibold text-gray-800">-</div>
-                        </div>
-                        <div class="bg-gray-50 border rounded-md p-3">
-                            <div class="text-xs text-gray-500">Last Error</div>
-                            <div id="ntnErrValue" class="font-semibold text-gray-800">-</div>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-1 lg:grid-cols-[160px_1fr_auto] gap-2 items-start">
-                        <input type="number" id="ntnSmsId" class="cmd cmd-input border border-gray-300 rounded px-3 py-2" min="0" max="65535" step="1" value="123" placeholder="消息 ID" disabled>
-                        <div>
-                            <textarea id="ntnSmsText" class="cmd cmd-input cmd-textarea w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" rows="3" maxlength="140" placeholder="卫星短信文本，UTF-8 最大 140 字节" disabled></textarea>
-                            <div class="mt-1 text-xs text-gray-500"><span id="ntnSmsByteCount">0</span>/140 bytes</div>
-                        </div>
-                        <button class="cmd cmd-button min-w-[120px]" disabled onclick="handleNtnSmsSend()">发送短信</button>
-                    </div>
-
-                    <div>
-                        <label class="block font-medium text-gray-700 mb-1">NTN 短信对话:</label>
-                        <div id="ntnConversationLog" class="block max-h-[240px] h-[240px] overflow-y-auto bg-gray-50 p-3 border border-gray-300 rounded-md text-sm space-y-2"></div>
-                    </div>
-
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        <div>
-                            <label class="block font-medium text-gray-700 mb-1">NTN 命令日志:</label>
-                            <div id="ntnCmdRspLog" class="block max-h-[180px] h-[180px] overflow-y-auto bg-gray-100 p-2 border border-gray-300 rounded-md text-sm font-mono"></div>
-                        </div>
-                        <div>
-                            <label class="block font-medium text-gray-700 mb-1">NTN 事件日志:</label>
-                            <div id="ntnEventLog" class="block max-h-[180px] h-[180px] overflow-y-auto bg-gray-100 p-2 border border-gray-300 rounded-md text-sm font-mono"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="p-2 border rounded-md">
-                    <h4 class="font-medium mb-2 text-gray-700">激活/禁用设备围栏</h4>
-                    <div class="flex flex-wrap items-center gap-2 mb-2">
-                        <button class="cmd cmd-button" disabled onclick="handleAppActivateFence()">激活围栏 (fe1)</button>
-                        <input type="text" id="app_fe1_param_fid" placeholder="围栏ID (e.g., f-1234)" class="cmd cmd-input flex-grow min-w-[200px]" disabled>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <button class="cmd cmd-button" disabled onclick="handleAppDeactivateFence()">禁用围栏 (fe0)</button>
-                        <input type="text" id="app_fe0_param_fid" placeholder="围栏ID (e.g., f-1234)" class="cmd cmd-input flex-grow min-w-[200px]" disabled>
-                    </div>
-                </div>
-
-                <div class="p-2 border rounded-md">
-                    <h4 class="font-medium mb-1 text-gray-700">添加围栏 (fa)</h4>
-                    <iframe id="fenceEditorFrame" src="gps.html" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; border:none; z-index:1000;"></iframe>
-                    <button id="openEditorBtn" class="cmd cmd-button" disabled onclick="openFenceEditor()">打开围栏编辑器</button>
-                    <div id="dataList">
-                        <p class="text-gray-500 italic">尚未接收到数据。请打开编辑器并提交一个围栏。</p>
-                    </div>
-                </div>
-
-                <div class="p-2 border rounded-md">
-                    <h4 class="font-medium mb-2 text-gray-700">删除围栏 (fd)</h4>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <button class="cmd cmd-button" disabled onclick="handleAppDeleteFence()">删除围栏</button>
-                        <input type="text" id="app_fd_param_fids" placeholder="围栏ID列表, 逗号分隔 (e.g., f-1,f-2)" class="cmd cmd-input flex-grow min-w-[260px]" disabled>
-                    </div>
-                </div>
-
-                <div class="p-2 border rounded-md">
-                     <h4 class="font-medium mb-2 text-gray-700">围栏事件调试指令 (debug.event_gnss)</h4>
-                     <div class="flex flex-wrap items-center gap-2">
-                        <input type="number" id="app_debug_event_type" min="1" max="6" placeholder="Type (1-6)" class="cmd cmd-input flex-grow" disabled>
-                        <input type="number" id="app_debug_event_lat" step="any" placeholder="Latitude" class="cmd cmd-input flex-grow" disabled>
-                        <input type="number" id="app_debug_event_lng" step="any" placeholder="Longitude" class="cmd cmd-input flex-grow" disabled>
-                        <button class="cmd cmd-button" disabled onclick="handleAppDebugEventGnss()">发送调试事件</button>
-                     </div>
-                     <p class="text-xs text-gray-500 mt-1">Type: 1:lost, 2:fix, 3:secured, 4:approaching, 5:breach, 6:escaped</p>
-                </div>
-
+          <div class="sub-card">
+            <h4>删除 Wi-Fi 信标</h4>
+            <div class="inline-controls">
+              <input type="text" id="wifiDeleteMac" class="cmd cmd-input admin-input" placeholder="MAC 地址" disabled>
+              <button class="cmd cmd-button danger" disabled onclick="handleWifiDeleteTag()">删除</button>
             </div>
-        </details>
+          </div>
+        </div>
 
-        <details id="eventMessagesSection" class="mb-6 bg-white shadow-md rounded-lg p-4">
-            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">事件消息 ({"e":"xxxxx"})</summary>
-            <div class="overflow-x-auto mt-4">
-                <div class="mb-3 flex justify-between items-center">
-                    <label class="block font-medium text-gray-700">事件消息列表:</label>
-                    <button id="clearEventMessages" class="cmd-button bg-gray-500 hover:bg-gray-600 text-sm px-3 py-1" onclick="clearEventMessages()">清空消息</button>
-                </div>
-                <div id="eventMessagesLog" class="block max-h-[300px] h-[300px] overflow-y-auto bg-gray-100 p-2 border border-gray-300 rounded-md text-sm font-mono"></div>
+        <div class="admin-grid three-columns">
+          <div class="sub-card">
+            <div class="card-heading compact-heading">
+              <h4>当前 Wi-Fi 状态</h4>
+              <button class="cmd cmd-button" disabled onclick="handleWifiStatus()">查询状态</button>
             </div>
-        </details>
-
-        <details id="wifiCommandsSection" class="mb-6 bg-white shadow-md rounded-lg p-4">
-            <summary class="font-semibold text-lg cursor-pointer text-blue-600 hover:text-blue-700">Wi-Fi 信标工具</summary>
-            <div class="space-y-4 mt-4">
-                <div id="wifiMessage" class="text-sm text-gray-600"></div>
-
-                <div class="p-4 border rounded-lg shadow-sm bg-white space-y-4">
-                    <h4 class="font-semibold text-gray-800 flex items-center gap-2">
-                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"></path>
-                        </svg>
-                        Wi-Fi 信标配置
-                    </h4>
-                    
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        <!-- 参数配置区 -->
-                        <div class="space-y-3">
-                            <!-- 扫描频率 -->
-                            <div class="bg-gray-50 p-3 rounded-md border border-gray-200 hover:border-blue-400 transition-colors">
-                                <div class="flex items-center gap-3 flex-wrap">
-                                    <label class="min-w-[6rem] font-medium text-gray-700 text-sm whitespace-nowrap" for="wifiScanFrequency" title="扫描频率，单位秒，最小30秒">
-                                        扫描频率 <span class="text-blue-600 font-semibold">f</span>
-                                    </label>
-                                    <input type="number" id="wifiScanFrequency" 
-                                           class="cmd cmd-input w-20 text-center border border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all" 
-                                           placeholder="60" min="30" value="60" disabled title="最小30秒">
-                                    <span class="text-gray-600 text-sm">秒</span>
-                                    <span class="text-xs text-gray-500">(≥30)</span>
-                                </div>
-                            </div>
-                            
-                            <!-- 丢失阈值 -->
-                            <div class="bg-gray-50 p-3 rounded-md border border-gray-200 hover:border-blue-400 transition-colors">
-                                <div class="flex items-center gap-3 flex-wrap">
-                                    <label class="min-w-[6rem] font-medium text-gray-700 text-sm whitespace-nowrap" for="wifiLostCount" title="最大未检测到信标次数，单位次，最小1次">
-                                        丢失阈值 <span class="text-blue-600 font-semibold">l</span>
-                                    </label>
-                                    <input type="number" id="wifiLostCount" 
-                                           class="cmd cmd-input w-16 text-center border border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all" 
-                                           placeholder="1" min="1" value="1" disabled title="至少1次">
-                                    <span class="text-gray-600 text-sm">次</span>
-                                    <span class="text-xs text-gray-500">(≥1)</span>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- 操作按钮区 -->
-                        <div class="flex items-center">
-                            <div class="flex gap-2 flex-wrap w-full">
-                                <button class="cmd cmd-button flex-1 min-w-[140px]" disabled onclick="handleWifiEnable()">
-                                    <span class="flex items-center justify-center gap-2">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                                        </svg>
-                                        开启信标
-                                    </span>
-                                </button>
-                                <button class="cmd cmd-button bg-gray-500 hover:bg-gray-600 flex-1 min-w-[140px]" disabled onclick="handleWifiDisable()">
-                                    <span class="flex items-center justify-center gap-2">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                        </svg>
-                                        关闭信标
-                                    </span>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="text-xs text-gray-600 bg-blue-50 p-3 rounded-md border border-blue-200">
-                        <strong class="text-gray-800">说明：</strong>f 为扫描频率（秒），l 为连续未检测到信标的次数阈值，达到后上报丢失事件
-                    </div>
-                </div>
-
-                <div class="p-4 border rounded-lg shadow-sm bg-white space-y-3">
-                    <h4 class="font-semibold text-gray-800">添加 Wi-Fi 信标</h4>
-                    <div class="flex flex-wrap gap-2">
-                        <input type="text" id="wifiAddSsid" class="cmd cmd-input flex-1 min-w-[180px]" placeholder="SSID" disabled>
-                        <input type="text" id="wifiAddMac" class="cmd cmd-input flex-1 min-w-[180px]" placeholder="MAC 地址 (例如: 12:34:56:78:9A:BC)" disabled>
-                        <button class="cmd cmd-button" disabled onclick="handleWifiAddTag()">添加</button>
-                    </div>
-                    <div class="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto_auto] gap-2 items-center">
-                        <input type="number" id="wifiAddLat" class="cmd cmd-input w-full" min="-90" max="90" step="0.000001" placeholder="纬度 lat（可选）" disabled>
-                        <input type="number" id="wifiAddLng" class="cmd cmd-input w-full" min="-180" max="180" step="0.000001" placeholder="经度 lng（可选）" disabled>
-                        <button class="cmd cmd-button" disabled onclick="openWifiLocationPicker()">地图选点</button>
-                        <button class="cmd cmd-button bg-gray-500 hover:bg-gray-600" disabled onclick="clearWifiLocation()">清除位置</button>
-                    </div>
-                    <div id="wifiLocationHint" class="text-xs text-gray-500">经纬度为可选项；留空时只提交 SSID 和 MAC。</div>
-                    <iframe id="wifiLocationPickerFrame" src="wifi-location-picker.html" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; border:none; z-index:1200;"></iframe>
-                </div>
-
-                <div class="p-4 border rounded-lg shadow-sm bg-white space-y-3">
-                    <h4 class="font-semibold text-gray-800">删除 Wi-Fi 信标</h4>
-                    <div class="flex flex-wrap gap-2">
-                        <input type="text" id="wifiDeleteMac" class="cmd cmd-input flex-1 min-w-[180px]" placeholder="MAC 地址" disabled>
-                        <button class="cmd cmd-button" disabled onclick="handleWifiDeleteTag()">删除</button>
-                    </div>
-                </div>
-
-
-                <div class="p-3 border rounded-md bg-gray-50">
-                    <div class="flex mb-2">
-                        <button class="cmd cmd-button mr-2" disabled onclick="handleWifiStatus()">查询 Wi-Fi 状态</button>
-                    </div>
-                    <h4 class="font-medium text-gray-700 mb-2">当前 Wi-Fi 状态</h4>
-                    <div id="wifiStatusDisplay" class="text-sm text-gray-700"></div>
-                </div>
-
-                <div class="p-3 border rounded-md bg-gray-50">
-                    <div class="flex mb-2">
-                        <button class="cmd cmd-button mr-2" disabled onclick="handleWifiScan()">触发 Wi-Fi 扫描</button>
-                    </div>
-                    <h4 class="font-medium text-gray-700 mb-2">最近扫描结果</h4>
-                    <div id="wifiScanResults" class="text-sm text-gray-700"></div>
-                </div>
-
-                <div class="p-3 border rounded-md bg-gray-50">
-                    <div class="flex mb-2">
-                        <button class="cmd cmd-button mr-2" disabled onclick="handleWifiQueryTags()">查询信标列表</button>
-                    </div>
-                    <h4 class="font-medium text-gray-700 mb-2">已保存的 Wi-Fi 信标</h4>
-                    <div id="wifiTagList" class="text-sm text-gray-700"></div>
-                </div>
-
-                <div>
-                    <label class="block font-medium text-gray-700 mb-1">Wi-Fi 命令日志:</label>
-                    <div id="wifiCmdRspLog" class="block max-h-[200px] h-[200px] overflow-y-auto bg-gray-100 p-2 border border-gray-300 rounded-md text-sm font-mono"></div>
-                </div>
+            <div id="wifiStatusDisplay" class="result-panel"></div>
+          </div>
+          <div class="sub-card">
+            <div class="card-heading compact-heading">
+              <h4>最近扫描结果</h4>
+              <button class="cmd cmd-button" disabled onclick="handleWifiScan()">触发扫描</button>
             </div>
-        </details>
-    </div>
+            <div id="wifiScanResults" class="result-panel"></div>
+          </div>
+          <div class="sub-card">
+            <div class="card-heading compact-heading">
+              <h4>已保存的信标</h4>
+              <button class="cmd cmd-button" disabled onclick="handleWifiQueryTags()">查询列表</button>
+            </div>
+            <div id="wifiTagList" class="result-panel"></div>
+          </div>
+        </div>
+
+        <div class="log-title">Wi-Fi 命令日志</div>
+        <div id="wifiCmdRspLog" class="log-panel medium"></div>
+      </article>
+    </section>
+  </main>
+</div>

@@ -1,36 +1,60 @@
-<script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import legacyMarkup from './legacy/ble-tool.html?raw';
+<template>
+  <el-config-provider :locale="currentLocale">
+    <router-view />
+    <ReDialog />
+    <div class="build-stamp" :title="`Frontend build: ${buildTime}`">
+      Build {{ buildTime }}
+    </div>
+  </el-config-provider>
+</template>
 
-const legacyRoot = ref<HTMLElement | null>(null);
+<script lang="ts">
+import { defineComponent } from "vue";
+import { ElConfigProvider } from "element-plus";
+import { ReDialog } from "@/components/ReDialog";
+import zhCn from "element-plus/es/locale/lang/zh-cn";
 
-function loadLegacyScript(): void {
-  if (window.__bleWebToolLegacyLoaded) {
-    return;
+export default defineComponent({
+  name: "app",
+  components: {
+    [ElConfigProvider.name]: ElConfigProvider,
+    ReDialog
+  },
+  computed: {
+    currentLocale() {
+      return zhCn;
+    },
+    buildTime() {
+      return __APP_INFO__.lastBuildTime;
+    }
   }
-
-  const script = document.createElement('script');
-  script.id = 'ble-web-tool-legacy-script';
-  script.src = './legacy/ble-tool.js';
-  script.async = false;
-  script.onload = () => {
-    window.__bleWebToolLegacyLoaded = true;
-  };
-  script.onerror = () => {
-    console.error('Unable to load legacy BLE tool script.');
-  };
-  document.body.appendChild(script);
-}
-
-onMounted(() => {
-  if (!legacyRoot.value) return;
-  legacyRoot.value.innerHTML = legacyMarkup;
-  loadLegacyScript();
 });
 </script>
 
-<template>
-  <ElConfigProvider>
-    <main ref="legacyRoot"></main>
-  </ElConfigProvider>
-</template>
+<style lang="scss" scoped>
+.build-stamp {
+  position: fixed;
+  right: 12px;
+  bottom: 8px;
+  z-index: 3000;
+  max-width: calc(100vw - 24px);
+  padding: 3px 8px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 18px;
+  color: rgba(31, 41, 55, 0.78);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 4px;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
+html.dark .build-stamp {
+  color: rgba(226, 232, 240, 0.82);
+  background: rgba(17, 24, 39, 0.78);
+  border-color: rgba(71, 85, 105, 0.65);
+}
+</style>

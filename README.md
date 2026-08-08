@@ -11,12 +11,17 @@
 - Windows 10/11，且本机蓝牙已开启
 - 首次使用时，如系统弹出蓝牙权限提示，请允许
 
+## 自动化验证
+
+后端、BLE 大包协议和前端连接状态的本地验证命令及实机证据要求见 `docs/ble_p0_smoke_test.md`。自动化测试不依赖真实蓝牙适配器；真实 Windows 适配器和目标固件必须单独记录环境后执行，不能用模拟测试替代端到端结论。
+
 ## 当前能力
 
 - 本地扫描 BLE 设备，并返回名称、MAC、RSSI
 - 按扫描结果选择目标设备并建立连接
 - 通过本地 HTTP API 代理特征写入
 - 通过 SSE 把通知转发回页面，兼容现有 AT/App/DFU 逻辑
+- 提供 C1 Dock BLE Wi-Fi 配网调试页，支持 AP 扫描、DHCP/静态 IPv4、取消、状态恢复和 AWS 就绪阶段观察
 - 前端源码位于 `frontend/`，生产构建产物位于 `web/`
 - `go run .` 和编译后的可执行文件都会自动定位包含 `web/index.html` 的目录
 
@@ -66,6 +71,18 @@ go build -o ble_tool.exe
 ```
 
 > Windows 下运行 `ble_tool.exe` 时同样会自动唤起默认浏览器。
+
+### C1 Dock 配网调试
+
+连接支持 SATELLAI APP 通道与 TRANSPORT CH=3 的 C1 Dock 后，进入“C1 Dock 配网”：
+
+1. 点击“查询状态”确认 `present` 和当前 `phase`；无 YHM4101 的测试板需要 development-only assume-present 镜像。
+2. 填写或生成 `request_id` 后开始扫描，等待 `wifi-scan` 的 `done=true` 终态。
+3. 从 AP 表中“选用”目标 SSID，输入密码，选择 DHCP 或静态 IPv4 后提交配网。
+4. 观察 `wifi-provision` 阶段与终态；`MQTT_DNS`～`MQTT_SUBSCRIBE` 是云端可恢复阶段，不应显示为 Wi-Fi 失败。
+5. 原始协议日志保留时间戳、方向、来源与 JSON；`password` 在发送日志中固定显示为 `[REDACTED]`。
+
+字段、错误码和已知限制见 `docs/c1_dock_provisioning_tool.md`。
 
 ## 常见问题
 

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-type BusinessRouteRegistrar func(mux *http.ServeMux)
+type BusinessRouteRegistrar func(mux *http.ServeMux) error
 
 func RunLocalWebApp(config AppConfig, registerRoutes BusinessRouteRegistrar) error {
 	addr := net.JoinHostPort(config.Host, config.Port)
@@ -36,10 +36,12 @@ func RunLocalWebApp(config AppConfig, registerRoutes BusinessRouteRegistrar) err
 		mux.HandleFunc("/"+config.ManifestPath, handleManifest(staticRoot, config.ManifestPath))
 	}
 	if registerRoutes != nil {
-		registerRoutes(mux)
+		if err := registerRoutes(mux); err != nil {
+			return fmt.Errorf("register business routes: %w", err)
+		}
 	}
 
-	mux.Handle("/", http.FileServer(http.Dir(staticRoot)))
+	mux.Handle("/", handleStatic(staticRoot))
 
 	server := &http.Server{Handler: loggingMiddleware(mux)}
 	trayOptions := TrayOptions{
@@ -87,6 +89,16 @@ func handleManifest(staticRoot, manifestPath string) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
 		http.ServeFile(w, r, filepath.Join(staticRoot, manifestPath))
 	}
+}
+
+func handleStatic(staticRoot string) http.Handler {
+	fileServer := http.FileServer(http.Dir(staticRoot))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 func isExistingInstance(config AppConfig, addr string) bool {
